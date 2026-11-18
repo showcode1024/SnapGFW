@@ -46,6 +46,17 @@ func BaseProtocolCatalog() []ProtocolRule {
 			Options:     RuleOpts{MinUDPPacketLen: 48},
 		},
 		{
+			ID:          ProtoUDPProxy,
+			Name:        "Hy2 / TUIC / UDP 代理拦截",
+			Category:    "全加密代理",
+			Description: "阻断入站 QUIC (Hysteria2 / TUIC / HTTP3)、Salamander 混淆及非标准入站 UDP 代理，自动豁免 DNS 与 NTP；不影响容器出站访问与正常 TCP HTTPS 建站。",
+			Warning:     "如容器需要对外提供游戏服、WebRTC 或自定义 UDP 服务，可关闭「拦截全部非标准 UDP」或配置排除端口。",
+			Enabled:     true,
+			Action:      ActionBlock,
+			Direction:   DirInbound,
+			Options:     RuleOpts{BlockAllUDP: true},
+		},
+		{
 			ID:          ProtoSOCKS,
 			Name:        "明文 SOCKS4 / 4a / 5 代理",
 			Category:    "明文代理",

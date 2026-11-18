@@ -40,6 +40,7 @@ type ProtocolID string
 const (
 	ProtoFETTCP       ProtocolID = "fet_tcp"       // Shadowsocks / SS-2022 TCP / native VMess-TCP
 	ProtoFETUDP       ProtocolID = "fet_udp"       // SS-UDP / SS-2022 UDP / VMess-UDP (with FP warning)
+	ProtoUDPProxy     ProtocolID = "udp_proxy"     // QUIC / Hysteria2 / TUIC & inbound UDP proxy blocker
 	ProtoSOCKS        ProtocolID = "socks"         // SOCKS4 / 4a / 5
 	ProtoHTTPProxy    ProtocolID = "http_proxy"    // HTTP CONNECT & absolute-URI forward proxy
 	ProtoWebSocket    ProtocolID = "websocket"     // Plaintext WebSocket / two-stage high-entropy WS
@@ -60,6 +61,7 @@ const (
 var AllProtocolIDs = []ProtocolID{
 	ProtoFETTCP,
 	ProtoFETUDP,
+	ProtoUDPProxy,
 	ProtoSOCKS,
 	ProtoHTTPProxy,
 	ProtoWebSocket,
@@ -101,6 +103,7 @@ type RuleOpts struct {
 	BlockNoSNI      bool `json:"block_no_sni,omitempty"`     // tls_anomaly: flag/block TLS without SNI
 	BlockFakeObfs   bool `json:"block_fake_obfs,omitempty"`  // tls_anomaly: flag/block malformed TLS/HTTP obfs prefixes
 	MinUDPPacketLen int  `json:"min_udp_len,omitempty"`      // fet_udp: ignore tiny keepalives below this byte length
+	BlockAllUDP     bool `json:"block_all_udp,omitempty"`    // udp_proxy: block all non-DNS/NTP UDP on matched direction
 	MaxDNSPayload   int  `json:"max_dns_payload,omitempty"`  // dns: flag DNS queries larger than N bytes (tunneling)
 	AllowStdSSHPort bool `json:"allow_std_ssh_port,omitempty"` // ssh: exempt port 22 if enabled
 }

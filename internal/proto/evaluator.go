@@ -587,6 +587,18 @@ func (u *UDPSession) Feed(rev bool, data []byte) EvalOutcome {
 						}
 					}
 				}
+				if cr, ok := u.cp.ActiveRule("udp_proxy", u.meta); ok {
+					detail := "quic/hy2/tuic"
+					if ch.SNI != "" {
+						detail = "quic/hy2/tuic sni=" + ch.SNI
+					}
+					events = append(events, MatchResult{
+						Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action, Detail: detail,
+					})
+					if cr.Rule.Action == "block" {
+						return EvalOutcome{Decision: DecisionBlock, Events: events}
+					}
+				}
 				return EvalOutcome{Decision: DecisionAllow, Events: events}
 			}
 			if u.pktCount >= u.maxPkts {
@@ -630,6 +642,7 @@ func (u *UDPSession) Feed(rev bool, data []byte) EvalOutcome {
 	}
 
 	// 5. WireGuard UDP
+	_, udpProxyActive := u.cp.ActiveRule("udp_proxy", u.meta)
 	if cr, ok := u.cp.ActiveRule("wireguard", u.meta); ok {
 		wgMatch, wgDone := u.wg.Feed(rev, data)
 		if wgMatch {
@@ -640,7 +653,8 @@ func (u *UDPSession) Feed(rev bool, data []byte) EvalOutcome {
 			}
 			return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
 		}
-		if !wgDone && u.pktCount < u.maxPkts {
+		wgCandidate := len(data) >= 4 && data[1] == 0 && data[2] == 0 && data[3] == 0 && data[0] >= 1 && data[0] <= 4
+		if !wgDone && u.pktCount < u.maxPkts && (!udpProxyActive || wgCandidate) {
 			return EvalOutcome{Decision: DecisionContinue}
 		}
 	}
@@ -667,6 +681,35 @@ func (u *UDPSession) Feed(rev bool, data []byte) EvalOutcome {
 						}
 						return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
 					}
+				}
+			}
+		}
+	}
+
+	// 7. Dedicated UDP Proxy blocker (QUIC / Hysteria2 / TUIC / Salamander obfs / non-standard UDP proxies)
+	if !rev {
+		if cr, ok := u.cp.ActiveRule("udp_proxy", u.meta); ok {
+			if !u.knownDNS && !IsLikelyNTP(data, u.meta.SrcPort, u.meta.DstPort) {
+				var detail string
+				switch {
+				case IsQUICInitialCandidate(data):
+					detail = "quic/hy2/tuic"
+				case len(data) >= 32 && !IsLikelySTUN(data) && !IsLikelyDTLS(data):
+					if fet := AnalyzeFET(data); fet.LooksEncrypted {
+						detail = fmt.Sprintf("udp-proxy/obfs popcount=%.2f len=%d", fet.AvgPopCount, len(data))
+					} else if cr.Rule.Options.BlockAllUDP {
+						detail = fmt.Sprintf("udp-proxy port=%d len=%d", u.meta.DstPort, len(data))
+					}
+				case cr.Rule.Options.BlockAllUDP:
+					detail = fmt.Sprintf("udp-proxy port=%d len=%d", u.meta.DstPort, len(data))
+				}
+				if detail != "" {
+					u.done = true
+					ev := MatchResult{Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action, Detail: detail}
+					if cr.Rule.Action == "block" {
+						return EvalOutcome{Decision: DecisionBlock, Events: []MatchResult{ev}}
+					}
+					return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
 				}
 			}
 		}

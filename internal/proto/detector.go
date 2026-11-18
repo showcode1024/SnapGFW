@@ -94,7 +94,7 @@ func CompilePolicy(p model.Policy, geositePath string) *CompiledPolicy {
 			case model.ProtoTrojan:
 				cp.NeedTCP = true
 				cp.NeedTrojan = true
-			case model.ProtoFETUDP, model.ProtoQUICSNI, model.ProtoWireGuard:
+			case model.ProtoFETUDP, model.ProtoUDPProxy, model.ProtoQUICSNI, model.ProtoWireGuard:
 				cp.NeedUDP = true
 			case model.ProtoOpenVPN, model.ProtoDNS, model.ProtoMining, model.ProtoBitTorrent:
 				cp.NeedTCP = true

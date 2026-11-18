@@ -238,7 +238,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
         <div class="pane-main">
           <div class="toolbar">
             <input id="proto-search" class="search-in" placeholder="筛选协议名称或 ID..." aria-label="筛选协议">
-            <span id="proto-enabled-count" style="font-size:12px;color:var(--text-2)">已启用 0 / 16</span>
+            <span id="proto-enabled-count" style="font-size:12px;color:var(--text-2)">已启用 0 / 17</span>
           </div>
           <div class="col-hdr">
             <span style="width:36px">启用</span>
@@ -265,6 +265,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
             <button type="button" data-tpl="bt">BitTorrent 端口段 (6881-6889)</button>
             <button type="button" data-tpl="scan">出站扫描爆破 (22 / 23 / 445 / 3389)</button>
             <button type="button" data-tpl="low20k">禁止入站 20000 以下端口 (1-19999)</button>
+            <button type="button" data-tpl="udp_in">禁止全部入站 UDP (L4 硬封 Hy2 / TUIC)</button>
           </div>
           <button type="button" id="btn-new-port" class="btn btn-ghost">+ 新建规则</button>
           <button type="button" id="btn-save-ports" class="btn btn-primary" disabled>已同步</button>
@@ -491,7 +492,8 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
 
   const PROTO_META = {
     fet_tcp:     { label: 'Shadowsocks 2022 / FET', fields: [] },
-    fet_udp:     { label: 'UDP 乱序代理', fields: ['min_udp'] },
+    fet_udp:     { label: '全加密 UDP 代理', fields: ['min_udp'] },
+    udp_proxy:   { label: 'Hy2 / TUIC / UDP 代理', fields: ['udp_proxy'] },
     socks:       { label: 'SOCKS4 / SOCKS5', fields: [] },
     http_proxy:  { label: 'HTTP 代理', fields: [] },
     websocket:   { label: 'WebSocket 隧道', fields: ['ws_mode'] },
@@ -779,6 +781,9 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     if (meta.fields.includes('min_udp')) {
       extraHTML += `<div class="field"><label>最小 UDP 包长 (bytes)</label><input id="pi-min-udp" class="mono" type="number" min="16" value="${p.options.min_udp_len || 48}"></div>`;
     }
+    if (meta.fields.includes('udp_proxy')) {
+      extraHTML += `<div class="sys-inline" style="font-size:12.5px"><span>拦截全部非标准 UDP (豁免 DNS/NTP)</span><button type="button" id="pi-block-all-udp" class="switch" role="switch" aria-checked="${!!p.options.block_all_udp}"></button></div>`;
+    }
     if (meta.fields.includes('ws_mode')) {
       const m = p.ws_mode || 'two_stage_high';
       extraHTML += `<div class="field"><label>WebSocket 模式</label><div class="seg" id="pi-ws-mode" style="width:100%">
@@ -834,6 +839,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     box.querySelectorAll('#pi-dir button').forEach(b => b.addEventListener('click', () => { p.direction = b.dataset.v; dirty(); renderProtoInspector(); }));
     if ($('#pi-ws-mode')) box.querySelectorAll('#pi-ws-mode button').forEach(b => b.addEventListener('click', () => { p.ws_mode = b.dataset.v; dirty(); renderProtoInspector(); }));
     if ($('#pi-min-udp')) $('#pi-min-udp').addEventListener('input', (e) => { p.options.min_udp_len = parseInt(e.target.value,10) || 48; dirty(); });
+    if ($('#pi-block-all-udp')) $('#pi-block-all-udp').addEventListener('click', () => { p.options.block_all_udp = !p.options.block_all_udp; dirty(); renderProtoInspector(); });
     if ($('#pi-gs')) $('#pi-gs').addEventListener('input', (e) => { p.geosite_cats = splitCSV(e.target.value); dirty(); });
     if ($('#pi-md')) $('#pi-md').addEventListener('input', (e) => { p.match_domains = splitLines(e.target.value); dirty(); });
     if ($('#pi-ed')) $('#pi-ed').addEventListener('input', (e) => { p.exclude_domains = splitCSV(e.target.value); dirty(); });
@@ -1345,6 +1351,8 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
       [22, 23, 445, 3389].forEach(port => add({ name: `禁止出站扫描 ${port}`, priority: 95, direction: 'out', l4_proto: 'tcp', port_start: port, port_end: port }));
     } else if (btn.dataset.tpl === 'low20k') {
       add({ name: '禁止入站 20000 以下低端口', priority: 50, direction: 'in', scope: 'host_mapped', l4_proto: 'both', port_start: 1, port_end: 19999 });
+    } else if (btn.dataset.tpl === 'udp_in') {
+      add({ name: '禁止全部入站 UDP (禁 Hy2 / TUIC)', priority: 60, direction: 'in', scope: 'dst', l4_proto: 'udp', port_start: 1, port_end: 65535 });
     }
     state.selectedPortIdx = state.policy.port_rules.length - 1;
     state.draftPort = structuredClone(state.policy.port_rules[state.selectedPortIdx]);

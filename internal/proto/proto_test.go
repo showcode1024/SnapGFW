@@ -191,12 +191,26 @@ func TestQUICInitialDecryptionAndSNI(t *testing.T) {
 		}
 	}
 
-	// Overseas QUIC SNI allowed
+	// Overseas QUIC SNI: blocked by udp_proxy in default anti_abuse (blocks Hy2/TUIC),
+	// and allowed when udp_proxy is turned off (verifying quic_sni itself does not block overseas SNI).
 	pktOK := buildQUICInitialPacket(t, quicV1, dcid, buildClientHelloMsg("example.org", false))
-	sessOK := NewUDPSession(testMeta("udp", DirInbound, 443), cp, 6)
+	sessBlocked := NewUDPSession(testMeta("udp", DirInbound, 443), cp, 6)
+	resBlocked := sessBlocked.Feed(false, pktOK)
+	if resBlocked.Decision != DecisionBlock || len(resBlocked.Events) != 1 || resBlocked.Events[0].Protocol != model.ProtoUDPProxy {
+		t.Fatalf("expected anti_abuse udp_proxy to block inbound Hy2/TUIC QUIC, got %+v", resBlocked)
+	}
+
+	polNoUDPProxy := model.BuildPreset("anti_abuse")
+	for i := range polNoUDPProxy.Protocols {
+		if polNoUDPProxy.Protocols[i].ID == model.ProtoUDPProxy {
+			polNoUDPProxy.Protocols[i].Enabled = false
+		}
+	}
+	cpNoUDPProxy := CompilePolicy(polNoUDPProxy, "")
+	sessOK := NewUDPSession(testMeta("udp", DirInbound, 443), cpNoUDPProxy, 6)
 	resOK := sessOK.Feed(false, pktOK)
 	if resOK.Decision != DecisionAllow {
-		t.Fatalf("expected allow for overseas QUIC SNI, got %+v", resOK)
+		t.Fatalf("expected allow for overseas QUIC SNI when udp_proxy disabled, got %+v", resOK)
 	}
 }
 
@@ -370,5 +384,75 @@ func TestStratumAndMiningPoolDetection(t *testing.T) {
 	rHTTP := sHTTP.Feed(false, []byte("POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Length: 29\r\n\r\n{\"method\":\"login\",\"user\":\"a\"}"))
 	if rHTTP.Decision != DecisionAllow {
 		t.Fatalf("expected normal HTTP POST JSON to pass cleanly, got %+v", rHTTP)
+	}
+}
+
+func TestUDPProxy_BlocksHy2TUICAndObfsButAllowsDNSAndNTP(t *testing.T) {
+	cp := testPolicy()
+	dcid := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
+
+	// 1. Inbound Hysteria2 / TUIC (standard QUIC with arbitrary domain) -> blocked on packet 1
+	pktHy2 := buildQUICInitialPacket(t, quicV1, dcid, buildClientHelloMsg("my-tuic.example.net", false))
+	sHy2 := NewUDPSession(testMeta("udp", DirInbound, 8443), cp, 6)
+	rHy2 := sHy2.Feed(false, pktHy2)
+	if rHy2.Decision != DecisionBlock || len(rHy2.Events) != 1 || rHy2.Events[0].Protocol != model.ProtoUDPProxy {
+		t.Fatalf("expected inbound Hy2/TUIC QUIC block, got %+v", rHy2)
+	}
+
+	// 2. Inbound Hysteria2 + Salamander obfs (random high-entropy UDP) -> blocked on packet 1
+	obfs := makeDeterministicCipher(120, 7)
+	sObfs := NewUDPSession(testMeta("udp", DirInbound, 20001), cp, 6)
+	rObfs := sObfs.Feed(false, obfs)
+	if rObfs.Decision != DecisionBlock || len(rObfs.Events) != 1 || rObfs.Events[0].Protocol != model.ProtoUDPProxy {
+		t.Fatalf("expected inbound Salamander obfs UDP block on packet 1, got %+v", rObfs)
+	}
+
+	// 3. Inbound small/custom UDP proxy (e.g. KCP) blocked when BlockAllUDP=true
+	sCustom := NewUDPSession(testMeta("udp", DirInbound, 29900), cp, 6)
+	rCustom := sCustom.Feed(false, []byte("kcp-custom-hello-payload"))
+	if rCustom.Decision != DecisionBlock || len(rCustom.Events) != 1 || rCustom.Events[0].Protocol != model.ProtoUDPProxy {
+		t.Fatalf("expected inbound custom UDP block under BlockAllUDP=true, got %+v", rCustom)
+	}
+
+	// 4. Outbound QUIC (e.g. container visiting HTTP/3 website) must remain allowed when udp_proxy is DirInbound
+	sOutQUIC := NewUDPSession(testMeta("udp", DirOutbound, 443), cp, 6)
+	rOutQUIC := sOutQUIC.Feed(false, pktHy2)
+	if rOutQUIC.Decision != DecisionAllow {
+		t.Fatalf("expected outbound QUIC to remain allowed, got %+v", rOutQUIC)
+	}
+
+	// 5. Standard DNS & NTP must NEVER be blocked by udp_proxy even on matched direction
+	dnsQuery := []byte{
+		0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x07, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0x03, 'c', 'o', 'm', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}
+	sDNS := NewUDPSession(testMeta("udp", DirInbound, 53), cp, 6)
+	if rDNS := sDNS.Feed(false, dnsQuery); rDNS.Decision != DecisionAllow {
+		t.Fatalf("expected standard DNS to pass, got %+v", rDNS)
+	}
+
+	ntpPkt := make([]byte, 48)
+	ntpPkt[0] = 0x23 // LI=0, VN=4, Mode=3 (client)
+	sNTP := NewUDPSession(testMeta("udp", DirInbound, 123), cp, 6)
+	if rNTP := sNTP.Feed(false, ntpPkt); rNTP.Decision != DecisionAllow {
+		t.Fatalf("expected standard NTP to pass, got %+v", rNTP)
+	}
+
+	// 6. When BlockAllUDP=false, small plain UDP passes while QUIC/Hy2/TUIC & obfs stay blocked
+	polSoft := model.BuildPreset("anti_abuse")
+	for i := range polSoft.Protocols {
+		if polSoft.Protocols[i].ID == model.ProtoUDPProxy {
+			polSoft.Protocols[i].Options.BlockAllUDP = false
+		}
+	}
+	cpSoft := CompilePolicy(polSoft, "")
+	sPlain := NewUDPSession(testMeta("udp", DirInbound, 29900), cpSoft, 6)
+	if rPlain := sPlain.Feed(false, []byte("plain-game-ping-1234")); rPlain.Decision != DecisionAllow {
+		t.Fatalf("expected plain UDP to pass when BlockAllUDP=false, got %+v", rPlain)
+	}
+	sHy2Soft := NewUDPSession(testMeta("udp", DirInbound, 8443), cpSoft, 6)
+	if rHy2Soft := sHy2Soft.Feed(false, pktHy2); rHy2Soft.Decision != DecisionBlock {
+		t.Fatalf("expected Hy2/TUIC QUIC to stay blocked when BlockAllUDP=false, got %+v", rHy2Soft)
 	}
 }
