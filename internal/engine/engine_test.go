@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"net"
 	"testing"
@@ -51,7 +50,7 @@ func buildIPv6UDP(srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte) 
 func TestEngine_TCPReassemblyOutOfOrderAndQuarantine(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workers = 2
-	pol := model.BuildPreset("anti_blacklist")
+	pol := model.BuildPreset("anti_abuse")
 	pol.Abuse.AutoQuarantineEnabled = true
 	pol.Abuse.QuarantineThreshold = 2
 	pol.Abuse.QuarantineWindowSec = 60
@@ -85,8 +84,7 @@ func TestEngine_TCPReassemblyOutOfOrderAndQuarantine(t *testing.T) {
 	}
 
 	// Stream 2: SS-2022 random ciphertext -> hits threshold=2 and triggers auto-quarantine!
-	rnd := make([]byte, 64)
-	_, _ = rand.Read(rnd)
+	rnd := makeTestCipher(64, 1)
 	syn2 := buildIPv4TCP(peerIP, tenantIP, 50001, 8388, 2000, TCPFlagSYN, nil)
 	_ = eng.ProcessSync(PacketEvent{StreamID: 102, Direction: proto.DirInbound, Reverse: false, Data: syn2})
 	segFET := buildIPv4TCP(peerIP, tenantIP, 50001, 8388, 2001, TCPFlagACK|TCPFlagPSH, rnd)
@@ -107,7 +105,7 @@ func TestEngine_TCPReassemblyOutOfOrderAndQuarantine(t *testing.T) {
 func TestEngine_IPv6UDPAndMidStreamSafety(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workers = 1
-	pol := model.BuildPreset("anti_blacklist")
+	pol := model.BuildPreset("anti_abuse")
 	// Enable WireGuard block manually to test IPv6 UDP detection
 	for i := range pol.Protocols {
 		if pol.Protocols[i].ID == model.ProtoWireGuard {
@@ -130,8 +128,7 @@ func TestEngine_IPv6UDPAndMidStreamSafety(t *testing.T) {
 	}
 
 	// Mid-stream TCP packet without SYN must offload safely without false FET block
-	rnd := make([]byte, 128)
-	_, _ = rand.Read(rnd)
+	rnd := makeTestCipher(128, 9)
 	midTCP := buildIPv4TCP(net.ParseIP("198.51.100.1"), net.ParseIP("10.91.0.2"), 44444, 22, 99999, TCPFlagACK|TCPFlagPSH, rnd)
 	if v := eng.ProcessSync(PacketEvent{StreamID: 202, Direction: proto.DirInbound, Reverse: false, Data: midTCP}); v != VerdictAcceptStream {
 		t.Fatalf("expected mid-stream TCP without SYN to offload safely, got %v", v)
@@ -143,7 +140,7 @@ func TestEngine_BurstLogDeduplication(t *testing.T) {
 	cfg.Workers = 1
 	cfg.AuditRingCap = 50
 	cfg.AuditBurstSec = 5
-	pol := model.BuildPreset("anti_blacklist")
+	pol := model.BuildPreset("anti_abuse")
 
 	audit, err := store.NewAuditStore("", cfg.AuditRingCap, 0)
 	if err != nil {
@@ -155,8 +152,7 @@ func TestEngine_BurstLogDeduplication(t *testing.T) {
 	tenantIP := net.ParseIP("10.91.0.9")
 
 	for i := uint32(1); i <= 6; i++ {
-		rnd := make([]byte, 64)
-		_, _ = rand.Read(rnd)
+		rnd := makeTestCipher(64, byte(i))
 		syn := buildIPv4TCP(peerIP, tenantIP, uint16(40000+i), 8388, i*1000, TCPFlagSYN, nil)
 		_ = eng.ProcessSync(PacketEvent{StreamID: 500 + i, Direction: proto.DirInbound, Reverse: false, Data: syn})
 		pay := buildIPv4TCP(peerIP, tenantIP, uint16(40000+i), 8388, i*1000+1, TCPFlagACK|TCPFlagPSH, rnd)
@@ -173,4 +169,14 @@ func TestEngine_BurstLogDeduplication(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected burst log deduplication to store 1 ring event, got %d", len(events))
 	}
+}
+
+func makeTestCipher(n int, seed byte) []byte {
+	out := make([]byte, n)
+	state := seed ^ 0x9b
+	for i := range out {
+		state = byte((int(state)*73 + 179) & 0xff)
+		out[i] = state
+	}
+	return out
 }

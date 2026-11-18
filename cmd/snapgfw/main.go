@@ -27,10 +27,11 @@ import (
 	"snapgfw/internal/notify"
 	"snapgfw/internal/runman"
 	"snapgfw/internal/store"
+	"snapgfw/internal/updater"
 	"snapgfw/internal/web"
 )
 
-var version = "v0.2.0"
+var version = "v0.2.1"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -129,6 +130,9 @@ func runServe(args []string) {
 	qm := engine.NewQuarantineManager(cfg.NftTable, as, notif)
 	eng := engine.New(cfg, ps.Get(), as, disc, qm)
 
+	selfRestart := false
+	restartCh := make(chan struct{}, 1)
+
 	if !*noEngine {
 		if err := netfilter.CheckHostPrereqs(); err != nil {
 			log.Fatalf("host netfilter prerequisite check failed: %v", err)
@@ -137,6 +141,9 @@ func runServe(args []string) {
 			log.Fatalf("apply initial nftables policy: %v", err)
 		}
 		defer func() {
+			if selfRestart {
+				return
+			}
 			if err := netfilter.DeleteTable(cfg.NftTable); err != nil {
 				log.Printf("cleanup nft table %s: %v", cfg.NftTable, err)
 			}
@@ -152,6 +159,12 @@ func runServe(args []string) {
 	})
 
 	srv := web.NewServer(*cfgPath, cfg, ps, as, eng, disc, qm, notif)
+	srv.SetUpdater(updater.New(version, func() {
+		select {
+		case restartCh <- struct{}{}:
+		default:
+		}
+	}))
 	httpSrv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Handler(),
@@ -221,6 +234,9 @@ func runServe(args []string) {
 	select {
 	case <-sigCh:
 		log.Printf("shutting down gracefully...")
+	case <-restartCh:
+		selfRestart = true
+		log.Printf("restarting into updated SnapGFW binary...")
 	case err := <-errCh:
 		log.Printf("fatal runtime error: %v", err)
 	}
@@ -264,7 +280,7 @@ func runApplyPreset(args []string) {
 	cfgPath := fs.String("config", "/etc/snapgfw/config.json", "path to config.json")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
-		log.Fatalf("usage: snapgfw apply-preset <anti_blacklist>")
+		log.Fatalf("usage: snapgfw apply-preset <anti_abuse>")
 	}
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {

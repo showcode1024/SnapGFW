@@ -202,7 +202,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
       <button type="button" class="nav-item active" data-nav="policy"><span class="nav-dot"></span>策略</button>
       <button type="button" class="nav-item" data-nav="ports"><span class="nav-dot"></span>端口</button>
       <button type="button" class="nav-item" data-nav="instances"><span class="nav-dot"></span>实例与日志</button>
-      <button type="button" class="nav-item" data-nav="system"><span class="nav-dot"></span>系统</button>
+      <button type="button" class="nav-item" data-nav="system"><span class="nav-dot"></span><span style="flex:1">系统</span><span id="nav-upd-dot" class="dot hidden" style="width:6px;height:6px"></span></button>
     </nav>
     <div class="sb-spacer"></div>
     <div class="sb-footer">
@@ -223,7 +223,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
         <h1>策略</h1>
         <div class="topbar-actions">
           <button type="button" id="btn-clear-policy" class="btn btn-quiet">清空规则</button>
-          <button type="button" id="btn-import-anti-bl" class="btn btn-ghost">导入推荐 · 防招黑</button>
+          <button type="button" id="btn-import-anti-bl" class="btn btn-ghost">导入推荐 · 防滥用</button>
           <button type="button" id="btn-save-policy" class="btn btn-primary" disabled>已同步</button>
         </div>
       </header>
@@ -238,7 +238,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
         <div class="pane-main">
           <div class="toolbar">
             <input id="proto-search" class="search-in" placeholder="筛选协议名称或 ID..." aria-label="筛选协议">
-            <span id="proto-enabled-count" style="font-size:12px;color:var(--text-2)">已启用 0 / 15</span>
+            <span id="proto-enabled-count" style="font-size:12px;color:var(--text-2)">已启用 0 / 16</span>
           </div>
           <div class="col-hdr">
             <span style="width:36px">启用</span>
@@ -261,8 +261,10 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
           <button type="button" id="btn-port-tpl" class="btn btn-ghost">+ 常用高危端口</button>
           <div id="port-tpl-menu" class="popover hidden">
             <button type="button" data-tpl="smtp">SMTP 发信 (25 / 465 / 587)</button>
+            <button type="button" data-tpl="mining">挖矿矿池端口 (3333 / 4444 / 14444)</button>
             <button type="button" data-tpl="bt">BitTorrent 端口段 (6881-6889)</button>
-            <button type="button" data-tpl="telnet">明文高危端口 (21 / 23 / 445)</button>
+            <button type="button" data-tpl="scan">出站扫描爆破 (22 / 23 / 445 / 3389)</button>
+            <button type="button" data-tpl="low20k">禁止入站 20000 以下端口 (1-19999)</button>
           </div>
           <button type="button" id="btn-new-port" class="btn btn-ghost">+ 新建规则</button>
           <button type="button" id="btn-save-ports" class="btn btn-primary" disabled>已同步</button>
@@ -299,8 +301,8 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
               <div class="field"><label for="ab-pps">UDP PPS 上限 (0不限)</label><input id="ab-pps" type="number" min="0" class="mono"></div>
             </div>
             <div class="autoban-bar">
-              <button type="button" id="ab-autoban" class="switch" role="switch" aria-checked="false" aria-label="超限自动隔离"></button>
-              <span style="font-weight:500;color:var(--text)">超限自动隔离</span>
+              <button type="button" id="ab-autoban" class="switch" role="switch" aria-checked="false" aria-label="多次违规自动隔离"></button>
+              <span style="font-weight:500;color:var(--text)">违规自动隔离</span>
               <span>阈值</span><input id="ab-thresh" type="number" min="1">
               <span>次 /</span><input id="ab-win" type="number" min="10">
               <span>秒 → 封禁</span><input id="ab-dur" type="number" min="30"><span>秒</span>
@@ -431,6 +433,22 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
             </div>
           </div>
 
+          <div class="sys-row">
+            <div class="sys-lbl">版本更新</div>
+            <div class="sys-ctrl">
+              <div class="sys-inline">
+                <div style="display:flex;align-items:center;gap:14px;font:400 12px var(--mono);color:var(--text-2)">
+                  <span id="txt-ver-cur">当前 -</span>
+                  <span style="display:inline-flex;align-items:center;gap:6px"><span id="dot-ver" class="dot muted"></span><span id="txt-ver-latest">未检查</span></span>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button type="button" id="btn-check-update" class="btn btn-ghost">检查更新</button>
+                  <button type="button" id="btn-apply-update" class="btn btn-primary hidden">升级并重启</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="sys-row" style="border-bottom:0">
             <div class="sys-lbl">管理员密码</div>
             <div class="sys-ctrl">
@@ -467,6 +485,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     ssh:         { label: 'SSH', fields: ['allow_std_ssh'] },
     http_plain:  { label: '明文 HTTP', fields: ['domains'] },
     dns:         { label: 'DNS 载荷检测', fields: ['domains', 'max_dns'] },
+    mining:      { label: '挖矿协议 / 矿池', fields: ['domains'] },
     bittorrent:  { label: 'BitTorrent / DHT', fields: [] },
   };
   const DIR_LABEL = { both: '双向', out: '出站', in: '入站' };
@@ -488,6 +507,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     draftPort: null,
     logFilter: { tenant: '', action: '', proto: '', q: '' },
     logPaused: false,
+    updateInfo: null,
     sse: null,
     pollTimer: null,
   };
@@ -535,6 +555,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     $('#app-view').classList.remove('hidden');
     populateProtoSelect();
     await reloadAll();
+    checkUpdate(false).catch(() => {});
     startSSE();
     clearInterval(state.pollTimer);
     state.pollTimer = setInterval(refreshTelemetry, 8000);
@@ -1112,6 +1133,47 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
       $('#dot-geoip').className = 'dot' + (state.overview.geoip_present ? '' : ' muted');
       $('#txt-geoip').textContent = state.overview.geoip_present ? 'GeoIP · 已就绪' : 'GeoIP · 未下载';
     }
+    renderUpdateInfo();
+  }
+
+  function renderUpdateInfo() {
+    const u = state.updateInfo;
+    if (!u) return;
+    $('#txt-ver-cur').textContent = `当前 ${u.current_version || '-'}`;
+    const dot = $('#dot-ver');
+    const txt = $('#txt-ver-latest');
+    const btnApply = $('#btn-apply-update');
+    const navDot = $('#nav-upd-dot');
+    if (u.check_error) {
+      dot.className = 'dot warn';
+      txt.textContent = u.check_error;
+      btnApply.classList.add('hidden');
+      navDot.classList.add('hidden');
+      return;
+    }
+    if (u.has_update) {
+      dot.className = 'dot';
+      txt.textContent = `发现新版 ${u.latest_version}`;
+      navDot.classList.remove('hidden');
+      if (u.can_self_update) {
+        btnApply.textContent = `升级 ${u.latest_version}`;
+        btnApply.classList.remove('hidden');
+      } else {
+        btnApply.classList.add('hidden');
+      }
+    } else {
+      dot.className = 'dot muted';
+      txt.textContent = u.latest_version ? `已是最新 (${u.latest_version})` : '已是最新';
+      btnApply.classList.add('hidden');
+      navDot.classList.add('hidden');
+    }
+  }
+
+  async function checkUpdate(force) {
+    const info = await api('GET', '/api/system/update' + (force ? '?refresh=1' : ''));
+    state.updateInfo = info;
+    renderUpdateInfo();
+    return info;
   }
 
   function populateProtoSelect() {
@@ -1175,11 +1237,11 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
 
   $('#btn-import-anti-bl').onclick = async () => {
     try {
-      state.policy = await api('POST', '/api/presets/anti_blacklist/apply');
+      state.policy = await api('POST', '/api/presets/anti_abuse/apply');
       state.dirtyPolicy = false;
       state.dirtyPorts = false;
       renderAll();
-      toast('已导入防招黑推荐策略，可随时修改');
+      toast('已导入防滥用推荐策略，可随时修改');
     } catch (err) { toast(err.message, true); }
   };
 
@@ -1210,10 +1272,14 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     const add = (r) => state.policy.port_rules.push({ ...emptyPortRule(), ...r });
     if (btn.dataset.tpl === 'smtp') {
       [25, 465, 587].forEach(port => add({ name: `禁止出站 SMTP ${port}`, priority: 100, direction: 'out', l4_proto: 'tcp', port_start: port, port_end: port }));
+    } else if (btn.dataset.tpl === 'mining') {
+      [3333, 4444, 5555, 14433, 14444].forEach(port => add({ name: `禁止矿池端口 ${port}`, priority: 95, direction: 'out', l4_proto: 'tcp', port_start: port, port_end: port }));
     } else if (btn.dataset.tpl === 'bt') {
       add({ name: '禁止 BT 常用端口段', priority: 90, direction: 'both', l4_proto: 'both', port_start: 6881, port_end: 6889 });
-    } else if (btn.dataset.tpl === 'telnet') {
-      [21, 23, 445].forEach(port => add({ name: `禁止高危端口 ${port}`, priority: 95, direction: 'both', l4_proto: 'tcp', port_start: port, port_end: port }));
+    } else if (btn.dataset.tpl === 'scan') {
+      [22, 23, 445, 3389].forEach(port => add({ name: `禁止出站扫描 ${port}`, priority: 95, direction: 'out', l4_proto: 'tcp', port_start: port, port_end: port }));
+    } else if (btn.dataset.tpl === 'low20k') {
+      add({ name: '禁止入站 20000 以下低端口', priority: 50, direction: 'in', scope: 'host_mapped', l4_proto: 'both', port_start: 1, port_end: 19999 });
     }
     state.selectedPortIdx = state.policy.port_rules.length - 1;
     state.draftPort = structuredClone(state.policy.port_rules[state.selectedPortIdx]);
@@ -1312,6 +1378,43 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
   $('#btn-notify-test').onclick = async () => {
     try { await api('POST', '/api/notify/test'); toast('测试通知已发出'); } catch (err) { toast(err.message, true); }
   };
+  $('#btn-check-update').onclick = async () => {
+    const b = $('#btn-check-update');
+    b.disabled = true; b.textContent = '检查中...';
+    try {
+      const info = await checkUpdate(true);
+      if (info.check_error) toast(info.check_error, true);
+      else toast(info.has_update ? `发现新版本 ${info.latest_version}` : '当前已是最新版本');
+    } catch (err) { toast(err.message, true); }
+    finally { b.disabled = false; b.textContent = '检查更新'; }
+  };
+
+  $('#btn-apply-update').onclick = async () => {
+    const b = $('#btn-apply-update');
+    const prevText = b.textContent;
+    b.disabled = true; b.textContent = '下载校验中...';
+    try {
+      const res = await api('POST', '/api/system/update');
+      b.textContent = '重启恢复中...';
+      toast(`已校验并安装 ${res.latest_version || '新版'}，正在重启`);
+      closeSSE();
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          const check = await fetch('/api/overview');
+          if (check.ok || check.status === 401) {
+            location.reload();
+            return;
+          }
+        } catch {}
+      }
+      toast('重启耗时较长，请稍后手动刷新页面');
+    } catch (err) {
+      toast(err.message, true);
+      b.disabled = false; b.textContent = prevText;
+    }
+  };
+
   $('#btn-save-pwd').onclick = async () => {
     const pw = $('#sys-pwd').value;
     try {

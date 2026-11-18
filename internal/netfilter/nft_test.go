@@ -10,7 +10,7 @@ import (
 
 func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 	cfg := config.Default()
-	pol := model.BuildPreset("anti_blacklist")
+	pol := model.BuildPreset("anti_abuse")
 	pol.PortRules = append(pol.PortRules, model.PortRule{
 		ID:        "allow-tenant-25",
 		Name:      "放行指定实例25",

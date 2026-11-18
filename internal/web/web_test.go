@@ -61,7 +61,7 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 	}
 
 	// 3. State change without X-Snapgfw CSRF header must fail with 403
-	req := httptest.NewRequest(http.MethodPost, "/api/presets/anti_blacklist/apply", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/presets/anti_abuse/apply", nil)
 	req.AddCookie(cookies[0])
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -69,13 +69,13 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 		t.Fatalf("expected 403 without CSRF header, got %d", rec.Code)
 	}
 
-	// 4. With X-Snapgfw header, recommended anti_blacklist preset applies cleanly
-	req = httptest.NewRequest(http.MethodPost, "/api/presets/anti_blacklist/apply", nil)
+	// 4. With X-Snapgfw header, recommended anti_abuse preset applies cleanly
+	req = httptest.NewRequest(http.MethodPost, "/api/presets/anti_abuse/apply", nil)
 	req.AddCookie(cookies[0])
 	req.Header.Set("X-Snapgfw", "1")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || ps.Get().ActivePreset != "anti_blacklist" {
+	if rec.Code != http.StatusOK || ps.Get().ActivePreset != "anti_abuse" {
 		t.Fatalf("preset apply failed: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -93,7 +93,7 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 		t.Fatalf("custom edit after preset import failed: %d %s", rec.Code, rec.Body.String())
 	}
 
-	// 6. Verify /api/presets exposes only anti_blacklist
+	// 6. Verify /api/presets exposes only anti_abuse
 	req = httptest.NewRequest(http.MethodGet, "/api/presets", nil)
 	req.AddCookie(cookies[0])
 	rec = httptest.NewRecorder()
@@ -104,14 +104,23 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 	var presets []struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &presets); err != nil || len(presets) != 1 || presets[0].ID != "anti_blacklist" {
-		t.Fatalf("expected single preset anti_blacklist, got %s", rec.Body.String())
+	if err := json.Unmarshal(rec.Body.Bytes(), &presets); err != nil || len(presets) != 1 || presets[0].ID != "anti_abuse" {
+		t.Fatalf("expected single preset anti_abuse, got %s", rec.Body.String())
 	}
 
 	// 7. Verify GET / renders SnapGFW Web UI
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("SnapGFW")) || !bytes.Contains(rec.Body.Bytes(), []byte("导入推荐 · 防招黑")) {
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("SnapGFW")) || !bytes.Contains(rec.Body.Bytes(), []byte("导入推荐 · 防滥用")) {
 		t.Fatalf("unexpected UI response: code=%d", rec.Code)
+	}
+
+	// 8. Verify GET /api/system/update returns structured version payload
+	req = httptest.NewRequest(http.MethodGet, "/api/system/update", nil)
+	req.AddCookie(cookies[0])
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"current_version"`)) {
+		t.Fatalf("unexpected update check response: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

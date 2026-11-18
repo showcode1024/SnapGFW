@@ -25,6 +25,7 @@ import (
 	"snapgfw/internal/notify"
 	"snapgfw/internal/runman"
 	"snapgfw/internal/store"
+	"snapgfw/internal/updater"
 )
 
 //go:embed ui.html
@@ -48,6 +49,7 @@ type Server struct {
 	discovery  *runman.Discovery
 	quarantine *engine.QuarantineManager
 	notifier   *notify.Notifier
+	updater    *updater.Updater
 
 	authMu   sync.Mutex
 	sessions map[string]time.Time
@@ -74,8 +76,16 @@ func NewServer(
 		discovery:  disc,
 		quarantine: qm,
 		notifier:   notif,
+		updater:    updater.New("dev", nil),
 		sessions:   make(map[string]time.Time),
 		failures:   make(map[string][]time.Time),
+	}
+}
+
+// SetUpdater attaches a custom release updater to the server.
+func (s *Server) SetUpdater(u *updater.Updater) {
+	if u != nil {
+		s.updater = u
 	}
 }
 
@@ -106,6 +116,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/geo/download", s.requireAuth(true, s.handleGeoDownload))
 	mux.HandleFunc("POST /api/settings/password", s.requireAuth(true, s.handleChangePassword))
 	mux.HandleFunc("POST /api/notify/test", s.requireAuth(true, s.handleNotifyTest))
+	mux.HandleFunc("GET /api/system/update", s.requireAuth(false, s.handleCheckUpdate))
+	mux.HandleFunc("POST /api/system/update", s.requireAuth(true, s.handleApplyUpdate))
 
 	return withSecurityHeaders(mux)
 }
@@ -650,6 +662,32 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.notifier.Send(pol.Notify, "test", "SnapGFW 测试告警", "这是一条来自 SnapGFW 防火墙面板的测试通知。", map[string]string{"status": "ok"})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.updater == nil {
+		writeErr(w, http.StatusServiceUnavailable, "updater unavailable")
+		return
+	}
+	force := r.URL.Query().Get("refresh") == "1"
+	writeJSON(w, http.StatusOK, s.updater.Check(r.Context(), force))
+}
+
+func (s *Server) handleApplyUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.updater == nil {
+		writeErr(w, http.StatusServiceUnavailable, "updater unavailable")
+		return
+	}
+	info, err := s.updater.ApplyUpdate(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":             true,
+		"latest_version": info.LatestVersion,
+		"restarting":     true,
+	})
 }
 
 // ReapplyAll compiles and applies the given policy to both DPI engine and nftables.

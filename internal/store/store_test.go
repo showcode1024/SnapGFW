@@ -30,11 +30,11 @@ func TestPolicyStore_EmptyDefaultImportAndEdit(t *testing.T) {
 		hookCalled++
 		return nil
 	})
-	// Importing recommended preset populates anti_blacklist rules
-	if _, err := ps.ApplyPreset("anti_blacklist", true); err != nil {
+	// Importing recommended preset populates anti_abuse rules
+	if _, err := ps.ApplyPreset("anti_abuse", true); err != nil {
 		t.Fatalf("ApplyPreset failed: %v", err)
 	}
-	if hookCalled != 1 || ps.Get().ActivePreset != "anti_blacklist" {
+	if hookCalled != 1 || ps.Get().ActivePreset != "anti_abuse" {
 		t.Fatalf("unexpected preset apply state")
 	}
 

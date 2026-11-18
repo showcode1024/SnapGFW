@@ -3,7 +3,6 @@ package proto
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"net"
@@ -130,7 +129,7 @@ func buildQUICInitialPacket(t *testing.T, version uint32, dcid []byte, clientHel
 }
 
 func testPolicy() *CompiledPolicy {
-	p := model.BuildPreset("anti_blacklist")
+	p := model.BuildPreset("anti_abuse")
 	return CompilePolicy(p, "")
 }
 
@@ -203,8 +202,7 @@ func TestQUICInitialDecryptionAndSNI(t *testing.T) {
 
 func TestShadowsocks2022TCPAndFakePrefixBypass(t *testing.T) {
 	cp := testPolicy()
-	rnd := make([]byte, 128)
-	_, _ = rand.Read(rnd)
+	rnd := makeDeterministicCipher(128, 1)
 
 	// Pure SS-2022 TCP random ciphertext
 	sess := NewTCPSession(testMeta("tcp", DirInbound, 8388), cp, 16384)
@@ -264,11 +262,20 @@ func TestTwoStageWebSocketPlaintextVsEncrypted(t *testing.T) {
 	// 2. VMess-WS (high-entropy ciphertext even after unmasking!)
 	sessProxy := NewTCPSession(testMeta("tcp", DirInbound, 80), cp, 16384)
 	_ = sessProxy.Feed(false, []byte(wsReq))
-	encPayload := make([]byte, 64)
-	_, _ = rand.Read(encPayload)
+	encPayload := makeDeterministicCipher(64, 2)
 	if r := sessProxy.Feed(false, buildMaskedFrame(encPayload)); r.Decision != DecisionBlock {
 		t.Fatalf("encrypted VMess-WS payload must be blocked, got %+v", r)
 	}
+}
+
+func makeDeterministicCipher(n int, seed byte) []byte {
+	out := make([]byte, n)
+	var state byte = seed ^ 0x9b
+	for i := range out {
+		state = byte((int(state)*73 + 179) & 0xff)
+		out[i] = state
+	}
+	return out
 }
 
 func TestOpenVPNStrictVsDNSSafety(t *testing.T) {
@@ -324,12 +331,44 @@ func TestSOCKSAndHTTPConnectAndWireGuard(t *testing.T) {
 		t.Fatalf("expected HTTP CONNECT block, got %+v", r)
 	}
 
-	// WireGuard (ActionLog in anti_blacklist, ActionBlock in strict_block)
+	// WireGuard (ActionLog in anti_abuse)
 	wgInit := make([]byte, 148)
 	wgInit[0] = 0x01
 	sessWG := NewUDPSession(testMeta("udp", DirInbound, 51820), cp, 6)
 	rWG := sessWG.Feed(false, wgInit)
 	if len(rWG.Events) != 1 || rWG.Events[0].Protocol != model.ProtoWireGuard || rWG.Decision != DecisionAllow {
-		t.Fatalf("expected WireGuard log event in anti_blacklist, got %+v", rWG)
+		t.Fatalf("expected WireGuard log event in anti_abuse, got %+v", rWG)
+	}
+}
+
+func TestStratumAndMiningPoolDetection(t *testing.T) {
+	cp := testPolicy()
+
+	// Outbound Stratum JSON-RPC mining.subscribe
+	s1 := NewTCPSession(testMeta("tcp", DirOutbound, 3333), cp, 16384)
+	r1 := s1.Feed(false, []byte("{\"id\":1,\"method\":\"mining.subscribe\",\"params\":[\"cgminer/4.10\"]}\n"))
+	if r1.Decision != DecisionBlock || len(r1.Events) != 1 || r1.Events[0].Protocol != model.ProtoMining {
+		t.Fatalf("expected Stratum mining block, got %+v", r1)
+	}
+
+	// Outbound XMRig CryptoNote Stratum login
+	s2 := NewTCPSession(testMeta("tcp", DirOutbound, 14444), cp, 16384)
+	r2 := s2.Feed(false, []byte("{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"login\",\"params\":{\"login\":\"44tL\",\"pass\":\"x\",\"agent\":\"XMRig/6.21.0\"}}\n"))
+	if r2.Decision != DecisionBlock || len(r2.Events) != 1 || r2.Events[0].Protocol != model.ProtoMining {
+		t.Fatalf("expected XMRig login block, got %+v", r2)
+	}
+
+	// Outbound SSL mining pool TLS SNI
+	sTLS := NewTCPSession(testMeta("tcp", DirOutbound, 14433), cp, 16384)
+	rTLS := sTLS.Feed(false, wrapTLSRecord(buildClientHelloMsg("pool.supportxmr.com", false)))
+	if rTLS.Decision != DecisionBlock || len(rTLS.Events) != 1 || rTLS.Events[0].Protocol != model.ProtoMining {
+		t.Fatalf("expected mining pool TLS SNI block, got %+v", rTLS)
+	}
+
+	// Normal HTTPS API / JSON over HTTP must NOT false-positive as Stratum mining
+	sHTTP := NewTCPSession(testMeta("tcp", DirOutbound, 80), cp, 16384)
+	rHTTP := sHTTP.Feed(false, []byte("POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Length: 29\r\n\r\n{\"method\":\"login\",\"user\":\"a\"}"))
+	if rHTTP.Decision != DecisionAllow {
+		t.Fatalf("expected normal HTTP POST JSON to pass cleanly, got %+v", rHTTP)
 	}
 }

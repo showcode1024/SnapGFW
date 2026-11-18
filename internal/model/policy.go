@@ -52,6 +52,7 @@ const (
 	ProtoSSH          ProtocolID = "ssh"           // SSH-2.0 banner
 	ProtoHTTPPlain    ProtocolID = "http_plain"    // Plaintext HTTP host/method inspection
 	ProtoDNS          ProtocolID = "dns"           // DNS domain & oversized DNS tunnel inspection
+	ProtoMining       ProtocolID = "mining"        // Stratum mining TCP JSON-RPC & known mining pool SNI/DNS
 	ProtoBitTorrent   ProtocolID = "bittorrent"    // BitTorrent TCP handshake & UDP DHT
 )
 
@@ -71,6 +72,7 @@ var AllProtocolIDs = []ProtocolID{
 	ProtoSSH,
 	ProtoHTTPPlain,
 	ProtoDNS,
+	ProtoMining,
 	ProtoBitTorrent,
 }
 

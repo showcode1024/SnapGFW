@@ -202,6 +202,19 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 				}
 			}
 			if !blocked {
+				if cr, ok := s.cp.ActiveRule("mining", s.meta); ok && ch.SNI != "" && cr.DomainMatcher != nil {
+					if cr.DomainMatcher.Match(ch.SNI) {
+						events = append(events, MatchResult{
+							Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action,
+							Detail: "pool sni=" + ch.SNI,
+						})
+						if cr.Rule.Action == "block" {
+							blocked = true
+						}
+					}
+				}
+			}
+			if !blocked {
 				if cr, ok := s.cp.ActiveRule("tls_anomaly", s.meta); ok {
 					var reason string
 					if cr.Rule.Options.BlockECH && (ch.HasECH || ch.HasESNI) {
@@ -337,6 +350,16 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 		}
 	}
 
+	// 6.5 Raw Stratum TCP mining handshake (newline-delimited JSON-RPC starting with '{')
+	if _, miningActive := s.cp.ActiveRule("mining", s.meta); miningActive && c[0] == '{' {
+		switch stRes, detail := DetectStratumTCP(c); stRes {
+		case MiningNeedMore:
+			return EvalOutcome{Decision: DecisionContinue}
+		case MiningMatched:
+			return s.emitSingle("mining", detail, true)
+		}
+	}
+
 	// 7. OpenVPN TCP (wait up to 1 server reply if initial packet looks like length-prefixed HardReset)
 	if _, ovpnActive := s.cp.ActiveRule("openvpn", s.meta); ovpnActive {
 		ovMatched, ovDone := s.ovpn.FeedTCP(c, s.serverBuf)
@@ -390,27 +413,39 @@ func (s *TCPSession) emitSingle(id model.ProtocolID, detail string, allowIfNotBl
 
 func (s *TCPSession) evalDNS(info DNSInfo) EvalOutcome {
 	s.done = true
-	cr, ok := s.cp.ActiveRule("dns", s.meta)
-	if !ok {
-		return EvalOutcome{Decision: DecisionAllow}
-	}
 	var events []MatchResult
-	if cr.Rule.Options.MaxDNSPayload > 0 && info.PayloadSize > cr.Rule.Options.MaxDNSPayload {
-		events = append(events, MatchResult{
-			Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action,
-			Detail: fmt.Sprintf("oversized dns=%dB", info.PayloadSize),
-		})
-		if cr.Rule.Action == "block" {
-			return EvalOutcome{Decision: DecisionBlock, Events: events}
+	if cr, ok := s.cp.ActiveRule("dns", s.meta); ok {
+		if cr.Rule.Options.MaxDNSPayload > 0 && info.PayloadSize > cr.Rule.Options.MaxDNSPayload {
+			events = append(events, MatchResult{
+				Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action,
+				Detail: fmt.Sprintf("oversized dns=%dB", info.PayloadSize),
+			})
+			if cr.Rule.Action == "block" {
+				return EvalOutcome{Decision: DecisionBlock, Events: events}
+			}
+			return EvalOutcome{Decision: DecisionAllow, Events: events}
 		}
-		return EvalOutcome{Decision: DecisionAllow, Events: events}
+		if cr.DomainMatcher != nil {
+			for _, q := range info.Questions {
+				if cr.DomainMatcher.Match(q) {
+					events = append(events, MatchResult{
+						Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action,
+						Detail: "dns=" + q,
+					})
+					if cr.Rule.Action == "block" {
+						return EvalOutcome{Decision: DecisionBlock, Events: events}
+					}
+					return EvalOutcome{Decision: DecisionAllow, Events: events}
+				}
+			}
+		}
 	}
-	if cr.DomainMatcher != nil {
+	if cr, ok := s.cp.ActiveRule("mining", s.meta); ok && cr.DomainMatcher != nil {
 		for _, q := range info.Questions {
 			if cr.DomainMatcher.Match(q) {
 				events = append(events, MatchResult{
 					Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action,
-					Detail: "dns=" + q,
+					Detail: "pool dns=" + q,
 				})
 				if cr.Rule.Action == "block" {
 					return EvalOutcome{Decision: DecisionBlock, Events: events}
@@ -485,6 +520,18 @@ func (u *UDPSession) Feed(rev bool, data []byte) EvalOutcome {
 				}
 			}
 		}
+		if cr, ok := u.cp.ActiveRule("mining", u.meta); ok && !dnsInfo.IsResponse && cr.DomainMatcher != nil {
+			for _, q := range dnsInfo.Questions {
+				if cr.DomainMatcher.Match(q) {
+					ev := MatchResult{Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action, Detail: "pool dns=" + q}
+					u.done = true
+					if cr.Rule.Action == "block" {
+						return EvalOutcome{Decision: DecisionBlock, Events: []MatchResult{ev}}
+					}
+					return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
+				}
+			}
+		}
 		u.done = true
 		return EvalOutcome{Decision: DecisionAllow}
 	}
@@ -505,6 +552,18 @@ func (u *UDPSession) Feed(rev bool, data []byte) EvalOutcome {
 						events = append(events, MatchResult{
 							Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action,
 							Detail: "quic sni=" + ch.SNI,
+						})
+						if cr.Rule.Action == "block" {
+							return EvalOutcome{Decision: DecisionBlock, Events: events}
+						}
+						return EvalOutcome{Decision: DecisionAllow, Events: events}
+					}
+				}
+				if cr, ok := u.cp.ActiveRule("mining", u.meta); ok && ch.SNI != "" && cr.DomainMatcher != nil {
+					if cr.DomainMatcher.Match(ch.SNI) {
+						events = append(events, MatchResult{
+							Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action,
+							Detail: "pool quic sni=" + ch.SNI,
 						})
 						if cr.Rule.Action == "block" {
 							return EvalOutcome{Decision: DecisionBlock, Events: events}

@@ -10,13 +10,13 @@ type PresetInfo struct {
 	Recommended bool   `json:"recommended,omitempty"`
 }
 
-// ListPresets returns the recommended built-in template available for one-click import.
+// ListPresets returns the unified recommended template available for one-click import.
 func ListPresets() []PresetInfo {
 	return []PresetInfo{
 		{
-			ID:          "anti_blacklist",
-			Name:        "防招黑",
-			Summary:     "入站阻断 SS/SS-2022/VMess-TCP、SOCKS、HTTP 代理、高熵 WS、OpenVPN 及国内 SNI 伪装，出站封禁 SMTP 发信；导入后可自由增删修改。",
+			ID:          "anti_abuse",
+			Name:        "防滥用",
+			Summary:     "合集防招黑与防滥用：拦截 SS/SS-2022/VMess、SOCKS、HTTP 代理、高熵 WS、OpenVPN、国内 SNI 伪装、Stratum 挖矿/矿池、BT/P2P，出站封禁 SMTP 发信与常见矿池端口并启用连接限速；导入后可自由编辑。",
 			Recommended: true,
 		},
 	}
@@ -161,11 +161,20 @@ func BaseProtocolCatalog() []ProtocolRule {
 			Options:     RuleOpts{MaxDNSPayload: 512},
 		},
 		{
+			ID:          ProtoMining,
+			Name:        "挖矿协议 / 矿池 (Stratum / Pool)",
+			Category:    "算力与滥用",
+			Description: "识别明文 Stratum TCP 挖矿协议 (mining.subscribe/authorize/XMRig login) 及常见 TLS/DNS 矿池连接。",
+			Enabled:     true,
+			Action:      ActionBlock,
+			Direction:   DirOutbound,
+		},
+		{
 			ID:          ProtoBitTorrent,
 			Name:        "BitTorrent / DHT P2P 特征",
 			Category:    "版权与滥用",
 			Description: "检测 TCP BitTorrent 握手与 UDP DHT bencode 节点报文，防止 BT 下载引发版权 DMCA 投诉。",
-			Enabled:     false,
+			Enabled:     true,
 			Action:      ActionBlock,
 			Direction:   DirBoth,
 		},
@@ -192,13 +201,13 @@ func DefaultPolicy() Policy {
 	}
 }
 
-// LookupPreset builds an editable Policy from a supported preset ID.
+// LookupPreset builds an editable Policy from the supported "anti_abuse" template.
 func LookupPreset(presetID string) (Policy, error) {
-	if presetID != "anti_blacklist" {
-		return Policy{}, fmt.Errorf("unknown preset %q (available: anti_blacklist)", presetID)
+	if presetID != "anti_abuse" {
+		return Policy{}, fmt.Errorf("unknown preset %q (available: anti_abuse)", presetID)
 	}
 	protos := BaseProtocolCatalog()
-	smtpsRules := []PortRule{
+	defaultPortRules := []PortRule{
 		{
 			ID:        "preset-block-smtp-out",
 			Name:      "禁止出站 SMTP 25",
@@ -238,12 +247,38 @@ func LookupPreset(presetID string) (Policy, error) {
 			PeerType:  "any",
 			Action:    ActionBlock,
 		},
+		{
+			ID:        "preset-block-pool-3333",
+			Name:      "禁止矿池常见端口 3333",
+			Enabled:   true,
+			Priority:  95,
+			Direction: DirOutbound,
+			Scope:     PortScopeDst,
+			L4Proto:   "tcp",
+			PortStart: 3333,
+			PortEnd:   3333,
+			PeerType:  "any",
+			Action:    ActionBlock,
+		},
+		{
+			ID:        "preset-block-pool-14444",
+			Name:      "禁止矿池常见端口 14444",
+			Enabled:   true,
+			Priority:  95,
+			Direction: DirOutbound,
+			Scope:     PortScopeDst,
+			L4Proto:   "tcp",
+			PortStart: 14444,
+			PortEnd:   14444,
+			PeerType:  "any",
+			Action:    ActionBlock,
+		},
 	}
 	return Policy{
 		Version:      1,
-		ActivePreset: "anti_blacklist",
+		ActivePreset: "anti_abuse",
 		Protocols:    protos,
-		PortRules:    smtpsRules,
+		PortRules:    defaultPortRules,
 		Abuse: AbuseConfig{
 			MaxConnsPerTenant:     4096,
 			NewConnRatePerSec:     300,
@@ -258,7 +293,7 @@ func LookupPreset(presetID string) (Policy, error) {
 	}, nil
 }
 
-// BuildPreset builds the recommended anti_blacklist policy.
+// BuildPreset builds the unified anti_abuse policy.
 func BuildPreset(presetID string) Policy {
 	pol, err := LookupPreset(presetID)
 	if err != nil {

@@ -2,6 +2,7 @@ package proto
 
 import (
 	"net"
+	"slices"
 
 	"snapgfw/internal/geo"
 	"snapgfw/internal/model"
@@ -73,8 +74,12 @@ func CompilePolicy(p model.Policy, geositePath string) *CompiledPolicy {
 		if len(pr.ExceptTenants) > 0 {
 			cr.ExceptTenants = parseIPListMatcher(pr.ExceptTenants)
 		}
-		if len(pr.GeoSiteCats) > 0 || len(pr.MatchDomains) > 0 || len(pr.ExcludeDomains) > 0 {
-			dm, fb := geo.BuildDomainPolicyMatcher(geositePath, pr.GeoSiteCats, pr.MatchDomains, pr.ExcludeDomains)
+		matchDomains := pr.MatchDomains
+		if pr.ID == model.ProtoMining {
+			matchDomains = slices.Concat(BuiltinMiningPoolDomains, pr.MatchDomains)
+		}
+		if len(pr.GeoSiteCats) > 0 || len(matchDomains) > 0 || len(pr.ExcludeDomains) > 0 {
+			dm, fb := geo.BuildDomainPolicyMatcher(geositePath, pr.GeoSiteCats, matchDomains, pr.ExcludeDomains)
 			cr.DomainMatcher = dm
 			if fb {
 				cp.GeoFallback = true
@@ -91,7 +96,7 @@ func CompilePolicy(p model.Policy, geositePath string) *CompiledPolicy {
 				cp.NeedTrojan = true
 			case model.ProtoFETUDP, model.ProtoQUICSNI, model.ProtoWireGuard:
 				cp.NeedUDP = true
-			case model.ProtoOpenVPN, model.ProtoDNS, model.ProtoBitTorrent:
+			case model.ProtoOpenVPN, model.ProtoDNS, model.ProtoMining, model.ProtoBitTorrent:
 				cp.NeedTCP = true
 				cp.NeedUDP = true
 			}
