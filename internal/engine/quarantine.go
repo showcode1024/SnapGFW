@@ -1,0 +1,165 @@
+package engine
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"natgfw/internal/model"
+	"natgfw/internal/netfilter"
+	"natgfw/internal/notify"
+	"natgfw/internal/store"
+)
+
+// QuarantinedTenant represents an active temporary kernel ban on a tenant IP.
+type QuarantinedTenant struct {
+	TenantIP   string    `json:"tenant_ip"`
+	InstanceID string    `json:"instance_id,omitempty"`
+	Hostname   string    `json:"hostname,omitempty"`
+	Reason     string    `json:"reason"`
+	BannedAt   time.Time `json:"banned_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+// QuarantineManager tracks sliding-window L7 violations per tenant and enforces temporary bans.
+type QuarantineManager struct {
+	tableName string
+	audit     *store.AuditStore
+	notifier  *notify.Notifier
+
+	mu     sync.Mutex
+	hits   map[string][]time.Time
+	banned map[string]QuarantinedTenant
+}
+
+// NewQuarantineManager creates a QuarantineManager bound to an nftables table.
+func NewQuarantineManager(tableName string, audit *store.AuditStore, notifier *notify.Notifier) *QuarantineManager {
+	return &QuarantineManager{
+		tableName: tableName,
+		audit:     audit,
+		notifier:  notifier,
+		hits:      make(map[string][]time.Time),
+		banned:    make(map[string]QuarantinedTenant),
+	}
+}
+
+// RecordBlock records a blocked event for tenantIP and triggers auto-quarantine if threshold is reached.
+func (q *QuarantineManager) RecordBlock(pol model.Policy, tenantIP, instanceID, hostname, reason string) {
+	if tenantIP == "" {
+		return
+	}
+	now := time.Now()
+	if pol.Notify.AlertOnBlock && q.notifier != nil {
+		q.notifier.Send(
+			pol.Notify,
+			"block:"+tenantIP,
+			"natgfw 拦截告警",
+			fmt.Sprintf("租户 IP: %s (%s)\n原因: %s", tenantIP, hostname, reason),
+			map[string]string{"tenant_ip": tenantIP, "instance_id": instanceID, "reason": reason},
+		)
+	}
+
+	if !pol.Abuse.AutoQuarantineEnabled {
+		return
+	}
+	threshold := max(pol.Abuse.QuarantineThreshold, 1)
+	window := time.Duration(max(pol.Abuse.QuarantineWindowSec, 10)) * time.Second
+	durSec := max(pol.Abuse.QuarantineDurationSec, 30)
+
+	q.mu.Lock()
+	if cur, ok := q.banned[tenantIP]; ok && cur.ExpiresAt.After(now) {
+		q.mu.Unlock()
+		return
+	}
+	cutoff := now.Add(-window)
+	arr := q.hits[tenantIP]
+	kept := arr[:0]
+	for _, ts := range arr {
+		if ts.After(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	kept = append(kept, now)
+	q.hits[tenantIP] = kept
+	shouldBan := len(kept) >= threshold
+	if shouldBan {
+		delete(q.hits, tenantIP)
+	}
+	q.mu.Unlock()
+
+	if shouldBan {
+		_ = q.Ban(tenantIP, instanceID, hostname, fmt.Sprintf("%d次违规(%s)", threshold, reason), durSec, pol.Abuse.FlushConntrackOnBlock, pol.Notify)
+	}
+}
+
+// Ban adds tenantIP to the kernel quarantine set and emits an audit event + alert.
+func (q *QuarantineManager) Ban(tenantIP, instanceID, hostname, reason string, durationSec int, flushCt bool, notifyCfg model.NotifyConfig) error {
+	if err := netfilter.QuarantineIP(q.tableName, tenantIP, durationSec); err != nil {
+		return err
+	}
+	if flushCt {
+		netfilter.FlushConntrackForIP(tenantIP)
+	}
+	now := time.Now()
+	entry := QuarantinedTenant{
+		TenantIP:   tenantIP,
+		InstanceID: instanceID,
+		Hostname:   hostname,
+		Reason:     reason,
+		BannedAt:   now,
+		ExpiresAt:  now.Add(time.Duration(max(durationSec, 10)) * time.Second),
+	}
+	q.mu.Lock()
+	q.banned[tenantIP] = entry
+	q.mu.Unlock()
+
+	if q.audit != nil {
+		q.audit.Record(store.AuditEvent{
+			Timestamp:  now,
+			TenantIP:   tenantIP,
+			InstanceID: instanceID,
+			Hostname:   hostname,
+			Protocol:   "quarantine",
+			Action:     "quarantine",
+			Detail:     fmt.Sprintf("%s (%ds)", reason, durationSec),
+		})
+	}
+	if notifyCfg.AlertOnBan && q.notifier != nil {
+		q.notifier.Send(
+			notifyCfg,
+			"ban:"+tenantIP,
+			"natgfw 自动熔断隔离",
+			fmt.Sprintf("租户 IP: %s (%s)\n原因: %s\n隔离时长: %d 秒", tenantIP, hostname, reason, durationSec),
+			entry,
+		)
+	}
+	return nil
+}
+
+// Unban removes tenantIP from kernel quarantine immediately.
+func (q *QuarantineManager) Unban(tenantIP string) error {
+	if err := netfilter.UnquarantineIP(q.tableName, tenantIP); err != nil {
+		return err
+	}
+	q.mu.Lock()
+	delete(q.banned, tenantIP)
+	delete(q.hits, tenantIP)
+	q.mu.Unlock()
+	return nil
+}
+
+// ListActive returns currently non-expired quarantined tenants.
+func (q *QuarantineManager) ListActive() []QuarantinedTenant {
+	now := time.Now()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	out := make([]QuarantinedTenant, 0, len(q.banned))
+	for k, v := range q.banned {
+		if !v.ExpiresAt.After(now) {
+			delete(q.banned, k)
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}

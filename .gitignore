@@ -1,0 +1,9 @@
+/dist/
+*.exe
+*.tmp
+*.bak
+*.jsonl
+policy.json
+config.json
+geosite.dat
+geoip.dat

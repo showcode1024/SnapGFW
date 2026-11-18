@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>natgfw 防火墙控制面板</title>
+<style>
+  :root {
+    --bg: #0f141b; --panel: #161d27; --panel2: #1c2532; --line: #283447;
+    --text: #e6edf3; --muted: #8b9bb0; --accent: #3b82f6; --ok: #22c55e;
+    --warn: #f59e0b; --bad: #ef4444; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+  nav { display: flex; gap: 6px; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tab { background: transparent; border: 1px solid transparent; color: var(--muted); padding: 7px 14px; border-radius: 6px; cursor: pointer; font-weight: 500; }
+  .tab.active { background: var(--panel2); color: var(--text); border-color: var(--line); }
+  main { max-width: 1260px; margin: 18px auto; padding: 0 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  h2 { margin: 0 0 12px; font-size: 16px; }
+  h3 { margin: 0 0 8px; font-size: 14px; color: var(--muted); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .big { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .col { display: flex; flex-direction: column; gap: 4px; }
+  label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 7px 10px; border-radius: 6px; font: inherit; }
+  textarea { font-family: var(--mono); font-size: 12px; }
+  .btn { border: 1px solid var(--line); background: var(--panel2); color: var(--text); padding: 7px 14px; border-radius: 6px; cursor: pointer; font-weight: 500; }
+  .btn:hover { border-color: #465a78; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { background: rgba(239,68,68,.15); border-color: var(--bad); color: #fca5a5; }
+  .btn.warn { background: rgba(245,158,11,.15); border-color: var(--warn); color: #fcd34d; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+  .badge.ok { background: rgba(34,197,94,.16); color: #86efac; }
+  .badge.warn { background: rgba(245,158,11,.18); color: #fde68a; }
+  .badge.bad { background: rgba(239,68,68,.18); color: #fca5a5; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .table-wrap { overflow-x: auto; }
+  .proto-item { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--panel2); }
+  .proto-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .proto-adv { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: none; }
+  .proto-adv.open { display: block; }
+  .preset-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel2); display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+  .preset-card.active { border-color: var(--accent); }
+  #login-box { max-width: 360px; margin: 12vh auto; }
+  #toast { position: fixed; right: 20px; bottom: 20px; background: #1e293b; border: 1px solid var(--accent); padding: 10px 16px; border-radius: 8px; display: none; z-index: 99; }
+  .hidden { display: none !important; }
+  .switch { display: inline-flex; align-items: center; gap: 6px; flex-direction: row; cursor: pointer; color: var(--text); font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="login-view" class="card" style="max-width:360px;margin:12vh auto;">
+  <h2>natgfw 防火墙登录</h2>
+  <form id="login-form" class="col" style="gap:10px;">
+    <label>用户名<input name="username" value="admin" required></label>
+    <label>密码<input name="password" type="password" required autocomplete="current-password"></label>
+    <button class="btn primary" type="submit">登录</button>
+  </form>
+</div>
+
+<div id="app-view" class="hidden">
+  <header>
+    <div class="brand">
+      <span>natgfw NAT 防火墙控制台</span>
+      <span id="hdr-preset" class="badge ok"></span>
+      <span id="hdr-bypass" class="badge warn hidden">紧急全旁路开启中</span>
+    </div>
+    <div class="row">
+      <button class="btn warn" id="btn-bypass">切换紧急旁路</button>
+      <button class="btn" id="btn-logout">退出</button>
+    </div>
+  </header>
+  <nav id="tabs">
+    <button class="tab active" data-tab="overview">概览与策略模板</button>
+    <button class="tab" data-tab="protocols">协议策略矩阵</button>
+    <button class="tab" data-tab="ports">端口与访问控制</button>
+    <button class="tab" data-tab="abuse">防滥用与熔断</button>
+    <button class="tab" data-tab="instances">实例与实时日志</button>
+    <button class="tab" data-tab="system">导入导出与系统</button>
+  </nav>
+  <main>
+    <section id="tab-overview"></section>
+    <section id="tab-protocols" class="hidden"></section>
+    <section id="tab-ports" class="hidden"></section>
+    <section id="tab-abuse" class="hidden"></section>
+    <section id="tab-instances" class="hidden"></section>
+    <section id="tab-system" class="hidden"></section>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let state = { overview: null, policy: null, presets: [], instances: null, sse: null };
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.style.display = 'none', 2800);
+}
+async function api(url, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  if (opts.method && opts.method !== 'GET') headers['X-Natgfw'] = '1';
+  if (opts.body && typeof opts.body !== 'string') {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(url, { ...opts, headers });
+  if (res.status === 401) {
+    showLogin();
+    throw new Error('登录已过期');
+  }
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) throw new Error((data && data.error) || text || ('HTTP ' + res.status));
+  return data;
+}
+
+function showLogin() {
+  if (state.sse) { state.sse.close(); state.sse = null; }
+  $('#login-view').classList.remove('hidden');
+  $('#app-view').classList.add('hidden');
+}
+function showApp() {
+  $('#login-view').classList.add('hidden');
+  $('#app-view').classList.remove('hidden');
+}
+
+$('#login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    await api('/api/login', { method: 'POST', body: { username: fd.get('username'), password: fd.get('password') } });
+    showApp();
+    await loadAll();
+  } catch (err) { toast('登录失败：' + err.message); }
+});
+$('#btn-logout').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' }).catch(() => {});
+  showLogin();
+});
+$('#btn-bypass').addEventListener('click', async () => {
+  if (!state.policy) return;
+  const next = !state.policy.global_bypass;
+  if (next && !confirm('开启紧急旁路将暂停所有 DPI 与端口拦截，确认吗？')) return;
+  try {
+    state.policy = await api('/api/bypass', { method: 'POST', body: { global_bypass: next } });
+    toast(next ? '已开启紧急旁路' : '已恢复防火墙拦截');
+    await loadAll();
+  } catch (err) { toast(err.message); }
+});
+
+document.querySelectorAll('#tabs .tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#tabs .tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const name = btn.dataset.tab;
+    document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+    $('#tab-' + name).classList.remove('hidden');
+    if (name === 'instances') startSSE();
+  });
+});
+
+async function loadAll() {
+  const [ov, pol, presets] = await Promise.all([
+    api('/api/overview'),
+    api('/api/policy'),
+    api('/api/presets'),
+  ]);
+  state.overview = ov;
+  state.policy = pol;
+  state.presets = presets;
+
+  $('#hdr-preset').textContent = '当前模板: ' + (pol.active_preset || '自定义');
+  $('#hdr-bypass').classList.toggle('hidden', !pol.global_bypass);
+
+  renderOverview();
+  renderProtocols();
+  renderPorts();
+  renderAbuse();
+  await loadInstancesAndLogs();
+  renderSystem();
+}
+
+function renderOverview() {
+  const o = state.overview;
+  const e = o.engine || {};
+  const protoTags = Object.entries(o.by_protocol || {}).map(([k, v]) => `<span class="badge warn" style="margin:2px;">${esc(k)}: ${v}</span>`).join('') || '<span class="muted">暂无命中记录</span>';
+  $('#tab-overview').innerHTML = `
+    <div class="grid">
+      <div class="stat"><h3>内核放行直通流</h3><div class="big" style="color:var(--ok)">${e.offloaded_accept ?? 0}</div><div class="muted">已打 ct mark 旁路</div></div>
+      <div class="stat"><h3>累计拦截 / 告警</h3><div class="big" style="color:var(--bad)">${o.audit_blocks} <span class="muted">/ ${o.audit_logs}</span></div><div class="muted">DPI 阻断 / 审计事件</div></div>
+      <div class="stat"><h3>待审流 / 队列丢包</h3><div class="big">${e.pending_streams ?? 0} <span class="muted">/ ${e.queue_dropped ?? 0}</span></div><div class="muted">Worker 数: ${e.worker_count ?? 0}</div></div>
+      <div class="stat"><h3>当前隔离实例</h3><div class="big">${o.quarantine_count}</div><div class="muted">托管实例数: ${o.instance_count} (${o.runman_available ? '已联动 runman' : '独立模式'})</div></div>
+      <div class="stat"><h3>内存与规则库</h3><div class="big">${o.heap_alloc_mb.toFixed(1)} MB</div><div class="muted">GeoSite: ${o.geosite_present ? '已加载' : (o.geo_fallback ? '内置核心CN库' : '缺失')} · GeoIP: ${o.geoip_present ? '已加载' : '未加载'}</div></div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h2>一键导入策略模板（导入后仍可随时单独修改任意协议或端口）</h2>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
+        ${state.presets.map(p => `
+          <div class="preset-card ${state.policy.active_preset === p.id ? 'active' : ''}">
+            <div>
+              <div style="font-weight:700;margin-bottom:6px;">${esc(p.name)} ${p.recommended ? '<span class="badge ok">推荐</span>' : ''}</div>
+              <div class="muted">${esc(p.summary)}</div>
+            </div>
+            <button class="btn ${state.policy.active_preset === p.id ? 'primary' : ''}" onclick="applyPreset('${esc(p.id)}')">${state.policy.active_preset === p.id ? '重新应用此模板' : '一键导入'}</button>
+          </div>`).join('')}
+      </div>
+    </div>
+    <div class="card"><h2>协议命中统计</h2><div>${protoTags}</div></div>
+  `;
+}
+
+window.applyPreset = async id => {
+  if (!confirm('将按所选模板重置协议、端口与防滥用配置（保留通知和白名单设置），确认？')) return;
+  try {
+    state.policy = await api('/api/presets/' + encodeURIComponent(id) + '/apply', { method: 'POST' });
+    toast('已导入模板：' + id);
+    await loadAll();
+  } catch (err) { toast('失败：' + err.message); }
+};
+
+function renderProtocols() {
+  const protos = state.policy.protocols || [];
+  $('#tab-protocols').innerHTML = `
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+          <h2 style="margin:0;">全协议策略矩阵（独立开关 · 自由配置）</h2>
+          <div class="muted">每项协议均可独立控制启停、动作、方向和例外；修改后点击右上角「保存并热生效」。</div>
+        </div>
+        <button class="btn primary" onclick="saveProtocols()">保存并热生效</button>
+      </div>
+      ${protos.map((p, idx) => `
+        <div class="proto-item" data-idx="${idx}">
+          <div class="proto-head">
+            <div style="flex:1;min-width:260px;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <label class="switch"><input type="checkbox" class="p-en" ${p.enabled ? 'checked' : ''}><strong>${esc(p.name)}</strong></label>
+                <span class="badge ok">${esc(p.category)}</span>
+                <span class="mono muted">${esc(p.id)}</span>
+              </div>
+              <div class="muted" style="margin-top:4px;">${esc(p.description)}</div>
+              ${p.warning ? `<div class="muted" style="color:var(--warn);margin-top:4px;">⚠ ${esc(p.warning)}</div>` : ''}
+            </div>
+            <div class="row">
+              <label>动作
+                <select class="p-act">
+                  <option value="block" ${p.action==='block'?'selected':''}>拦截</option>
+                  <option value="log" ${p.action==='log'?'selected':''}>仅记录告警</option>
+                  <option value="allow" ${p.action==='allow'?'selected':''}>显式放行</option>
+                </select>
+              </label>
+              <label>方向
+                <select class="p-dir">
+                  <option value="in" ${p.direction==='in'?'selected':''}>仅入站(外部→实例)</option>
+                  <option value="out" ${p.direction==='out'?'selected':''}>仅出站(实例→外部)</option>
+                  <option value="both" ${p.direction==='both'?'selected':''}>双向</option>
+                </select>
+              </label>
+              ${p.id === 'websocket' ? `
+              <label>WS 模式
+                <select class="p-wsmode">
+                  <option value="two_stage_high" ${p.ws_mode==='two_stage_high'?'selected':''}>两阶段高熵拦截</option>
+                  <option value="block_all" ${p.ws_mode==='block_all'?'selected':''}>拦截全部明文WS</option>
+                  <option value="log_only" ${p.ws_mode==='log_only'?'selected':''}>仅告警</option>
+                </select>
+              </label>` : ''}
+              <button class="btn" type="button" onclick="this.closest('.proto-item').querySelector('.proto-adv').classList.toggle('open')">高级参数</button>
+            </div>
+          </div>
+          <div class="proto-adv">
+            <div class="row">
+              <label>GeoSite 分类 (逗号分隔, 如 cn)
+                <input class="p-geosite" value="${esc((p.geosite_cats||[]).join(','))}" placeholder="cn">
+              </label>
+              <label>额外匹配域名 (逗号分隔)
+                <input class="p-mdom" style="width:240px;" value="${esc((p.match_domains||[]).join(','))}" placeholder="example.com,full:a.org">
+              </label>
+              <label>排除白名单域名 (逗号分隔)
+                <input class="p-edom" style="width:240px;" value="${esc((p.exclude_domains||[]).join(','))}" placeholder="myallowed.cn">
+              </label>
+              <label>豁免端口 (逗号分隔)
+                <input class="p-eports" style="width:150px;" value="${esc((p.except_ports||[]).join(','))}" placeholder="22,443">
+              </label>
+              <label>豁免租户 IP/CIDR
+                <input class="p-eten" style="width:200px;" value="${esc((p.except_tenants||[]).join(','))}" placeholder="10.91.0.2">
+              </label>
+            </div>
+            ${p.id === 'tls_anomaly' ? `
+              <div class="row" style="margin-top:8px;">
+                <label class="switch"><input type="checkbox" class="o-fake" ${p.options?.block_fake_obfs?'checked':''}>拦截 Fake TLS/HTTP Obfs</label>
+                <label class="switch"><input type="checkbox" class="o-ech" ${p.options?.block_ech?'checked':''}>拦截 ECH/ESNI</label>
+                <label class="switch"><input type="checkbox" class="o-nosni" ${p.options?.block_no_sni?'checked':''}>拦截无 SNI 的纯 IP TLS</label>
+              </div>` : ''}
+            ${p.id === 'fet_udp' ? `
+              <div class="row" style="margin-top:8px;">
+                <label>最小检测 UDP 包长 (字节)<input type="number" class="o-minudp" value="${p.options?.min_udp_len || 48}"></label>
+              </div>` : ''}
+            ${p.id === 'dns' ? `
+              <div class="row" style="margin-top:8px;">
+                <label>超大 DNS 隧道阈值 (字节)<input type="number" class="o-maxdns" value="${p.options?.max_dns_payload || 512}"></label>
+              </div>` : ''}
+            ${p.id === 'ssh' ? `
+              <div class="row" style="margin-top:8px;">
+                <label class="switch"><input type="checkbox" class="o-ssh22" ${p.options?.allow_std_ssh_port?'checked':''}>放行标准 22 端口</label>
+              </div>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+const splitCSV = s => s.split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
+
+window.saveProtocols = async () => {
+  const next = structuredClone(state.policy);
+  next.active_preset = 'custom';
+  document.querySelectorAll('.proto-item').forEach(el => {
+    const p = next.protocols[+el.dataset.idx];
+    p.enabled = el.querySelector('.p-en').checked;
+    p.action = el.querySelector('.p-act').value;
+    p.direction = el.querySelector('.p-dir').value;
+    const ws = el.querySelector('.p-wsmode');
+    if (ws) p.ws_mode = ws.value;
+    p.geosite_cats = splitCSV(el.querySelector('.p-geosite').value);
+    p.match_domains = splitCSV(el.querySelector('.p-mdom').value);
+    p.exclude_domains = splitCSV(el.querySelector('.p-edom').value);
+    p.except_ports = splitCSV(el.querySelector('.p-eports').value).map(Number).filter(n => n > 0 && n <= 65535);
+    p.except_tenants = splitCSV(el.querySelector('.p-eten').value);
+    p.options = p.options || {};
+    if (p.id === 'tls_anomaly') {
+      p.options.block_fake_obfs = el.querySelector('.o-fake').checked;
+      p.options.block_ech = el.querySelector('.o-ech').checked;
+      p.options.block_no_sni = el.querySelector('.o-nosni').checked;
+    }
+    if (p.id === 'fet_udp') p.options.min_udp_len = +el.querySelector('.o-minudp').value || 48;
+    if (p.id === 'dns') p.options.max_dns_payload = +el.querySelector('.o-maxdns').value || 512;
+    if (p.id === 'ssh') p.options.allow_std_ssh_port = el.querySelector('.o-ssh22').checked;
+  });
+  try {
+    state.policy = await api('/api/policy', { method: 'PUT', body: next });
+    toast('协议策略已保存并立即生效');
+    await loadAll();
+  } catch (err) { toast('保存失败：' + err.message); }
+};
+
+function renderPorts() {
+  const rules = state.policy.port_rules || [];
+  $('#tab-ports').innerHTML = `
+    <div class="card">
+      <h2>L3 / L4 端口与访问控制（由 nftables 内核直接执行）</h2>
+      <div class="row" style="margin-bottom:12px;">
+        <button class="btn" onclick="quickPortPreset('smtp')">+ 一键禁出站 SMTP (25/465/587)</button>
+        <button class="btn" onclick="quickPortPreset('smb')">+ 一键禁出站 SMB/RPC (135,137-139,445)</button>
+        <button class="btn" onclick="quickPortPreset('rdp')">+ 一键禁入站 RDP 3389</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <tr><th>优先级</th><th>名称</th><th>范围(租户IP)</th><th>方向/作用域</th><th>L4/端口</th><th>对端过滤</th><th>动作</th><th>状态</th><th>操作</th></tr>
+          ${rules.map((r, i) => `
+            <tr>
+              <td>${r.priority}</td>
+              <td>${esc(r.name)}</td>
+              <td class="mono">${esc(r.tenant_ip || '全局全部实例')}</td>
+              <td>${r.direction==='in'?'入站':r.direction==='out'?'出站':'双向'} · ${esc(r.scope||'dst')}</td>
+              <td class="mono">${esc(r.l4_proto)} ${r.port_start ? r.port_start + (r.port_end && r.port_end !== r.port_start ? '-' + r.port_end : '') : '全部'}</td>
+              <td class="mono">${r.peer_type==='geoip'?'GeoIP:'+esc((r.geoip_codes||[]).join(',')):r.peer_type==='cidr'?esc(r.peer_cidr):'任意'}</td>
+              <td><span class="badge ${r.action==='block'?'bad':'ok'}">${r.action==='block'?'拦截':'放行'}</span></td>
+              <td><button class="btn" onclick="togglePortRule(${i})">${r.enabled?'已启用':'已停用'}</button></td>
+              <td><button class="btn danger" onclick="delPortRule(${i})">删除</button></td>
+            </tr>`).join('') || '<tr><td colspan="9" class="muted">暂无端口规则</td></tr>'}
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h2>新增端口规则</h2>
+      <form id="port-form" class="row">
+        <label>规则名称<input name="name" placeholder="例如：禁出站 8080" required></label>
+        <label>优先级<input name="priority" type="number" value="100" style="width:85px"></label>
+        <label>方向<select name="direction"><option value="out">出站(实例→外部)</option><option value="in">入站(外部→实例)</option><option value="both">双向</option></select></label>
+        <label>端口作用域<select name="scope"><option value="dst">目标端口(dst)</option><option value="host_mapped">宿主机映射端口(DNAT前)</option><option value="src">源端口(src)</option></select></label>
+        <label>L4 协议<select name="l4_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option><option value="icmp">ICMP</option><option value="all">全部</option></select></label>
+        <label>起始端口<input name="port_start" type="number" value="0" min="0" max="65535" style="width:95px"></label>
+        <label>结束端口<input name="port_end" type="number" value="0" min="0" max="65535" style="width:95px"></label>
+        <label>指定租户 IP(可空)<input name="tenant_ip" placeholder="留空=全局" style="width:140px"></label>
+        <label>对端类型<select name="peer_type"><option value="any">任意地址</option><option value="cidr">CIDR 网段</option><option value="geoip">GeoIP 国家</option></select></label>
+        <label>CIDR / 国家码<input name="peer_val" placeholder="1.2.3.0/24 或 CN,RU" style="width:155px"></label>
+        <label>动作<select name="action"><option value="block">拦截</option><option value="allow">放行</option></select></label>
+        <button class="btn primary" type="submit">添加并生效</button>
+      </form>
+      <div class="muted" style="margin-top:8px;">提示：优先级数字越大越先匹配（例如给指定实例 10.91.0.2 配优先级 200 放行 25 端口，全局优先级 100 拦截 25 端口）。端口填 0 代表全部端口。</div>
+    </div>
+  `;
+  $('#port-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const pt = f.get('peer_type'), pv = String(f.get('peer_val') || '').trim();
+    const rule = {
+      id: 'rule-' + Date.now(),
+      name: String(f.get('name')),
+      enabled: true,
+      priority: +f.get('priority'),
+      direction: f.get('direction'),
+      scope: f.get('scope'),
+      l4_proto: f.get('l4_proto'),
+      port_start: +f.get('port_start') || 0,
+      port_end: +f.get('port_end') || 0,
+      tenant_ip: String(f.get('tenant_ip') || '').trim(),
+      peer_type: pt,
+      action: f.get('action'),
+    };
+    if (pt === 'cidr') rule.peer_cidr = pv;
+    if (pt === 'geoip') rule.geoip_codes = splitCSV(pv).map(x => x.toUpperCase());
+    const next = structuredClone(state.policy);
+    next.port_rules.push(rule);
+    try {
+      state.policy = await api('/api/policy', { method: 'PUT', body: next });
+      toast('端口规则已下发');
+      await loadAll();
+    } catch (err) { toast('失败：' + err.message); }
+  });
+}
+
+window.togglePortRule = async idx => {
+  const next = structuredClone(state.policy);
+  next.port_rules[idx].enabled = !next.port_rules[idx].enabled;
+  try {
+    state.policy = await api('/api/policy', { method: 'PUT', body: next });
+    await loadAll();
+  } catch (err) { toast(err.message); }
+};
+window.delPortRule = async idx => {
+  if (!confirm('确认删除这条端口规则？')) return;
+  const next = structuredClone(state.policy);
+  next.port_rules.splice(idx, 1);
+  try {
+    state.policy = await api('/api/policy', { method: 'PUT', body: next });
+    toast('已删除并重载 nftables');
+    await loadAll();
+  } catch (err) { toast(err.message); }
+};
+window.quickPortPreset = async kind => {
+  const next = structuredClone(state.policy);
+  const add = (id, name, dir, l4, ps, pe) => {
+    if (!next.port_rules.some(r => r.id === id)) {
+      next.port_rules.push({ id, name, enabled: true, priority: 100, direction: dir, scope: 'dst', l4_proto: l4, port_start: ps, port_end: pe, peer_type: 'any', action: 'block' });
+    }
+  };
+  if (kind === 'smtp') {
+    add('q-smtp-25', '禁出站 SMTP 25', 'out', 'tcp', 25, 25);
+    add('q-smtp-465', '禁出站 SMTPS 465', 'out', 'tcp', 465, 465);
+    add('q-smtp-587', '禁出站 Submission 587', 'out', 'tcp', 587, 587);
+  } else if (kind === 'smb') {
+    add('q-rpc-135', '禁出站 RPC 135', 'out', 'both', 135, 135);
+    add('q-nb-137', '禁出站 NetBIOS 137-139', 'out', 'both', 137, 139);
+    add('q-smb-445', '禁出站 SMB 445', 'out', 'tcp', 445, 445);
+  } else if (kind === 'rdp') {
+    add('q-rdp-3389', '禁入站 RDP 3389', 'in', 'both', 3389, 3389);
+  }
+  try {
+    state.policy = await api('/api/policy', { method: 'PUT', body: next });
+    toast('已添加并应用规则');
+    await loadAll();
+  } catch (err) { toast(err.message); }
+};
+
+function renderAbuse() {
+  const a = state.policy.abuse || {};
+  $('#tab-abuse').innerHTML = `
+    <div class="card">
+      <h2>单实例防滥用限速与自动熔断隔离</h2>
+      <form id="abuse-form" class="col" style="gap:12px;">
+        <div class="row">
+          <label>单实例最大并发连接数 (0=不限)<input name="max_conns" type="number" value="${a.max_conns_per_tenant||0}"></label>
+          <label>单实例每秒新建连接上限 (0=不限)<input name="conn_rate" type="number" value="${a.new_conn_rate_per_sec||0}"></label>
+          <label>单实例 UDP 每秒包数上限 PPS (0=不限)<input name="udp_pps" type="number" value="${a.udp_pps_limit_per_tenant||0}"></label>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" name="auto_q" ${a.auto_quarantine_enabled?'checked':''}>开启违规多次自动临时断网隔离</label>
+          <label class="switch"><input type="checkbox" name="flush_ct" ${a.flush_conntrack_on_block?'checked':''}>封禁/隔离时同步清理存量连接 (conntrack -D)</label>
+        </div>
+        <div class="row">
+          <label>触发阈值 (次)<input name="q_thresh" type="number" value="${a.quarantine_threshold||10}"></label>
+          <label>统计窗口 (秒)<input name="q_win" type="number" value="${a.quarantine_window_sec||300}"></label>
+          <label>隔离时长 (秒)<input name="q_dur" type="number" value="${a.quarantine_duration_sec||600}"></label>
+          <button class="btn primary" type="submit">保存防滥用配置</button>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <h2>当前隔离黑名单</h2>
+      <form id="ban-form" class="row" style="margin-bottom:12px;">
+        <label>租户 IP<input name="tenant_ip" placeholder="10.91.0.2" required></label>
+        <label>隔离时长(秒)<input name="duration_sec" type="number" value="600" style="width:110px"></label>
+        <label>原因<input name="reason" placeholder="手动隔离"></label>
+        <button class="btn danger" type="submit">立即隔离该 IP</button>
+      </form>
+      <div id="q-list" class="muted">加载中...</div>
+    </div>
+  `;
+  $('#abuse-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const next = structuredClone(state.policy);
+    next.abuse = {
+      max_conns_per_tenant: +f.get('max_conns') || 0,
+      new_conn_rate_per_sec: +f.get('conn_rate') || 0,
+      udp_pps_limit_per_tenant: +f.get('udp_pps') || 0,
+      auto_quarantine_enabled: f.get('auto_q') === 'on',
+      flush_conntrack_on_block: f.get('flush_ct') === 'on',
+      quarantine_threshold: +f.get('q_thresh') || 10,
+      quarantine_window_sec: +f.get('q_win') || 300,
+      quarantine_duration_sec: +f.get('q_dur') || 600,
+    };
+    try {
+      state.policy = await api('/api/policy', { method: 'PUT', body: next });
+      toast('防滥用规则已生效');
+      await loadAll();
+    } catch (err) { toast(err.message); }
+  });
+  $('#ban-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try {
+      await api('/api/quarantine/ban', { method: 'POST', body: {
+        tenant_ip: f.get('tenant_ip'),
+        duration_sec: +f.get('duration_sec') || 600,
+        reason: f.get('reason'),
+      }});
+      toast('已加入内核隔离');
+      await loadAll();
+    } catch (err) { toast(err.message); }
+  });
+  loadQuarantineList();
+}
+
+async function loadQuarantineList() {
+  const el = $('#q-list');
+  if (!el) return;
+  try {
+    const list = await api('/api/quarantine') || [];
+    if (!list.length) { el.innerHTML = '<div class="muted">当前无被隔离的租户</div>'; return; }
+    el.innerHTML = `<div class="table-wrap"><table><tr><th>租户 IP</th><th>实例</th><th>原因</th><th>过期时间</th><th>操作</th></tr>` +
+      list.map(q => `<tr><td class="mono">${esc(q.tenant_ip)}</td><td>${esc(q.hostname||q.instance_id||'-')}</td><td>${esc(q.reason)}</td><td class="mono">${esc(q.expires_at)}</td><td><button class="btn" onclick="unbanIP('${esc(q.tenant_ip)}')">解除隔离</button></td></tr>`).join('') +
+      `</table></div>`;
+  } catch {}
+}
+window.unbanIP = async ip => {
+  await api('/api/quarantine/unban', { method: 'POST', body: { tenant_ip: ip } });
+  toast('已解除隔离：' + ip);
+  await loadAll();
+};
+
+async function loadInstancesAndLogs() {
+  const [instRes, logs] = await Promise.all([api('/api/instances'), api('/api/logs')]);
+  state.instances = instRes;
+  const rows = instRes.instances || [];
+  $('#tab-instances').innerHTML = `
+    <div class="card">
+      <h2>租户实例状态 ${instRes.runman_available ? '<span class="badge ok">已只读同步 runman-agent</span>' : '<span class="badge warn">未检测到 runman-agent 数据目录</span>'}</h2>
+      <div class="table-wrap">
+        <table>
+          <tr><th>主机名 / UUID</th><th>内网 IP</th><th>宿主机端口映射</th><th>拦截 / 告警</th><th>状态</th><th>操作</th></tr>
+          ${rows.map(r => `
+            <tr>
+              <td><div>${esc(r.hostname||'-')}</div><div class="mono muted">${esc(r.id||'')}</div></td>
+              <td class="mono">${esc(r.ipv4)}${r.ipv6?'<br>'+esc(r.ipv6):''}</td>
+              <td class="mono">${(r.forwards||[]).map(f => `${f.proto}:${f.host_port}→${f.guest_port}`).join('<br>') || '-'}</td>
+              <td><span class="badge bad">${r.stats?.block_count||0}</span> / <span class="badge warn">${r.stats?.log_count||0}</span></td>
+              <td>${r.quarantined ? `<span class="badge bad">隔离中</span>` : `<span class="badge ok">正常</span>`}</td>
+              <td>
+                ${r.quarantined
+                  ? `<button class="btn" onclick="unbanIP('${esc(r.ipv4)}')">解封</button>`
+                  : `<button class="btn danger" onclick="banQuick('${esc(r.ipv4)}')">临时隔离</button>`}
+              </td>
+            </tr>`).join('') || '<tr><td colspan="6" class="muted">暂无实例记录</td></tr>'}
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <h2 style="margin:0;">实时拦截与审计日志</h2>
+        <div class="row">
+          <input id="log-q" placeholder="搜索 IP / SNI / 协议" oninput="filterLogs()">
+          <button class="btn" onclick="filterLogs()">刷新</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="log-table">
+          <tr><th>时间</th><th>租户 IP</th><th>方向</th><th>对端 IP:端口</th><th>协议</th><th>动作</th><th>详情</th></tr>
+          <tbody id="log-body">${renderLogRows(logs||[])}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderLogRows(logs) {
+  return logs.map(ev => `
+    <tr>
+      <td class="mono muted">${esc((ev.ts||'').replace('T',' ').slice(0,19))}</td>
+      <td class="mono">${esc(ev.tenant_ip)}${ev.hostname?` (${esc(ev.hostname)})`:''}</td>
+      <td>${ev.dir==='in'?'入站':'出站'} · ${esc(ev.l4)}</td>
+      <td class="mono">${esc(ev.peer_ip)}:${ev.dst_port||0}${ev.host_port?` (映射:${ev.host_port})`:''}</td>
+      <td class="mono">${esc(ev.protocol)}</td>
+      <td><span class="badge ${ev.action==='block'||ev.action==='quarantine'?'bad':'warn'}">${esc(ev.action)}</span></td>
+      <td class="mono">${esc(ev.detail||'')}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">暂无日志</td></tr>';
+}
+
+window.filterLogs = async () => {
+  const q = $('#log-q')?.value || '';
+  const logs = await api('/api/logs?q=' + encodeURIComponent(q));
+  const tb = $('#log-body');
+  if (tb) tb.innerHTML = renderLogRows(logs || []);
+};
+window.banQuick = async ip => {
+  if (!confirm(`确认临时隔离 ${ip} 10 分钟？`)) return;
+  await api('/api/quarantine/ban', { method: 'POST', body: { tenant_ip: ip, duration_sec: 600, reason: '面板快捷隔离' } });
+  toast('已隔离 ' + ip);
+  await loadAll();
+};
+
+function startSSE() {
+  if (state.sse) return;
+  const es = new EventSource('/api/logs/stream');
+  es.onmessage = e => {
+    try {
+      const ev = JSON.parse(e.data);
+      const tb = $('#log-body');
+      if (tb) {
+        if (tb.innerText.includes('暂无日志')) tb.innerHTML = '';
+        tb.insertAdjacentHTML('afterbegin', renderLogRows([ev]));
+        while (tb.children.length > 200) tb.removeChild(tb.lastChild);
+      }
+    } catch {}
+  };
+  state.sse = es;
+}
+
+function renderSystem() {
+  const n = state.policy.notify || {};
+  const trusted = (state.policy.trusted_tenants || []).join(',');
+  $('#tab-system').innerHTML = `
+    <div class="card">
+      <h2>全局信任白名单 & 规则导入导出（跨节点模板同步）</h2>
+      <div class="row" style="margin-bottom:12px;">
+        <label style="flex:1;">免检信任租户 IP/CIDR (逗号分隔)
+          <input id="trusted-input" value="${esc(trusted)}" placeholder="10.91.0.10,10.91.0.20">
+        </label>
+        <button class="btn primary" onclick="saveTrusted()">保存白名单</button>
+        <a class="btn" href="/api/policy/export" download="natgfw-policy.json">导出当前配置 JSON</a>
+      </div>
+      <div class="col">
+        <label>粘贴配置 JSON 导入并立即生效
+          <textarea id="import-json" rows="5" placeholder='{"version":1,"protocols":[...]}'></textarea>
+        </label>
+        <div><button class="btn primary" onclick="importJSON()">导入 JSON 配置</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>GeoSite / GeoIP 数据更新</h2>
+      <p class="muted">离线时自动使用内置核心国内域名兜底；联网下载完整 v2ray-rules-dat 可获得最全国内域名与国家 GeoIP 匹配。</p>
+      <button class="btn primary" id="btn-geodl" onclick="downloadGeo()">一键下载 / 更新 GeoSite & GeoIP</button>
+    </div>
+    <div class="card">
+      <h2>Telegram / Webhook 告警通知</h2>
+      <form id="notify-form" class="col" style="gap:10px;">
+        <div class="row">
+          <label style="flex:1;">Webhook URL<input name="webhook_url" value="${esc(n.webhook_url||'')}" placeholder="https://..."></label>
+          <label>Telegram Bot Token<input name="tg_token" value="${esc(n.telegram_token||'')}"></label>
+          <label>Telegram Chat ID<input name="tg_chat" value="${esc(n.telegram_chat_id||'')}"></label>
+        </div>
+        <div class="row">
+          <label class="switch"><input type="checkbox" name="alert_block" ${n.alert_on_block?'checked':''}>每次拦截推送告警(受冷却时间限制)</label>
+          <label class="switch"><input type="checkbox" name="alert_ban" ${n.alert_on_ban?'checked':''}>自动熔断隔离时推送告警</label>
+          <label>冷却间隔(秒)<input name="cooldown" type="number" value="${n.min_interval_sec||60}" style="width:90px"></label>
+          <button class="btn primary" type="submit">保存告警配置</button>
+          <button class="btn" type="button" onclick="testNotify()">发送测试消息</button>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <h2>修改管理员密码</h2>
+      <form id="pw-form" class="row">
+        <label>新密码 (至少 6 位)<input name="password" type="password" minlength="6" required></label>
+        <button class="btn primary" type="submit">更新密码</button>
+      </form>
+    </div>
+  `;
+
+  $('#notify-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const next = structuredClone(state.policy);
+    next.notify = {
+      webhook_url: String(f.get('webhook_url') || '').trim(),
+      telegram_token: String(f.get('tg_token') || '').trim(),
+      telegram_chat_id: String(f.get('tg_chat') || '').trim(),
+      alert_on_block: f.get('alert_block') === 'on',
+      alert_on_ban: f.get('alert_ban') === 'on',
+      min_interval_sec: +f.get('cooldown') || 60,
+    };
+    state.policy = await api('/api/policy', { method: 'PUT', body: next });
+    toast('告警配置已保存');
+  });
+  $('#pw-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try {
+      await api('/api/settings/password', { method: 'POST', body: { password: f.get('password') } });
+      e.target.reset();
+      toast('密码已更新');
+    } catch (err) { toast(err.message); }
+  });
+}
+
+window.saveTrusted = async () => {
+  const next = structuredClone(state.policy);
+  next.trusted_tenants = splitCSV($('#trusted-input').value);
+  try {
+    state.policy = await api('/api/policy', { method: 'PUT', body: next });
+    toast('白名单已生效');
+    await loadAll();
+  } catch (err) { toast(err.message); }
+};
+window.importJSON = async () => {
+  try {
+    const obj = JSON.parse($('#import-json').value);
+    state.policy = await api('/api/policy/import', { method: 'POST', body: obj });
+    toast('配置已导入并生效');
+    await loadAll();
+  } catch (err) { toast('导入失败：' + err.message); }
+};
+window.downloadGeo = async () => {
+  const btn = $('#btn-geodl');
+  btn.disabled = true; btn.textContent = '正在下载更新...';
+  try {
+    await api('/api/geo/download', { method: 'POST' });
+    toast('GeoSite & GeoIP 更新成功');
+    await loadAll();
+  } catch (err) { toast('更新失败：' + err.message); }
+  finally { btn.disabled = false; btn.textContent = '一键下载 / 更新 GeoSite & GeoIP'; }
+};
+window.testNotify = async () => {
+  try { await api('/api/notify/test', { method: 'POST' }); toast('已发送测试告警'); }
+  catch (err) { toast(err.message); }
+};
+
+(async () => {
+  try {
+    await loadAll();
+    showApp();
+  } catch {
+    showLogin();
+  }
+})();
+</script>
+</body>
+</html>
