@@ -212,7 +212,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
         <span>全局旁路</span>
         <button type="button" id="btn-bypass" class="switch" role="switch" aria-checked="false" aria-label="全局旁路"></button>
       </div>
-      <button type="button" id="btn-logout" style="text-align:left;font-size:12px;color:var(--text-muted);padding:2px 0">退出登录</button>
+      <div class="sb-meta"><button type="button" id="btn-logout" style="text-align:left;font-size:12px;color:var(--text-muted);padding:2px 0">退出登录</button><span id="sb-version" class="mono">-</span></div>
     </div>
   </aside>
 
@@ -507,6 +507,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     draftPort: null,
     logFilter: { tenant: '', action: '', proto: '', q: '' },
     logPaused: false,
+    bootVersion: '',
     updateInfo: null,
     sse: null,
     pollTimer: null,
@@ -561,6 +562,22 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     state.pollTimer = setInterval(refreshTelemetry, 8000);
   }
 
+  function syncVersionOrReload(ov) {
+    const v = ov && ov.version;
+    if (!v) return false;
+    if (!state.bootVersion) {
+      state.bootVersion = v;
+      return false;
+    }
+    // If the backend binary restarted underneath an open tab, reload once so
+    // the browser fetches the matching embedded ui.html instead of running stale JS.
+    if (state.bootVersion !== v) {
+      location.reload();
+      return true;
+    }
+    return false;
+  }
+
   async function reloadAll() {
     const [ov, pol, instRes, bans, logs] = await Promise.all([
       api('GET', '/api/overview'),
@@ -569,6 +586,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
       api('GET', '/api/quarantine'),
       api('GET', '/api/logs'),
     ]);
+    if (syncVersionOrReload(ov)) return;
     state.overview = ov;
     state.policy = pol;
     state.instances = instRes.instances || [];
@@ -598,6 +616,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
         api('GET', '/api/instances'),
         api('GET', '/api/quarantine'),
       ]);
+      if (syncVersionOrReload(ov)) return;
       state.overview = ov;
       state.instances = instRes.instances || [];
       state.bans = bans || [];
@@ -641,6 +660,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     $('#sb-iface-name').textContent = bypass ? '旁路中' : (ov.bridge_iface || 'rmbr0');
     $('#sb-mem').textContent = `内存 ${(ov.heap_alloc_mb || 0).toFixed(1)} MB`;
     $('#sb-qdrop').textContent = `队列 ${ov.engine?.queue_dropped || 0}`;
+    $('#sb-version').textContent = ov.version || '-';
     const geoEl = $('#sb-geo');
     if (ov.geo_fallback) { geoEl.textContent = '内置兜底'; geoEl.style.color = 'var(--warn)'; }
     else { geoEl.textContent = '已就绪'; geoEl.style.color = 'var(--ok)'; }
@@ -1138,8 +1158,9 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
 
   function renderUpdateInfo() {
     const u = state.updateInfo;
+    const curVer = (u && u.current_version) || state.overview?.version || '-';
+    $('#txt-ver-cur').textContent = `当前 ${curVer}`;
     if (!u) return;
-    $('#txt-ver-cur').textContent = `当前 ${u.current_version || '-'}`;
     const dot = $('#dot-ver');
     const txt = $('#txt-ver-latest');
     const btnApply = $('#btn-apply-update');
@@ -1200,7 +1221,10 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b === btn));
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + state.nav));
     if (state.nav === 'instances') { renderInstances(); renderLogs(); }
-    if (state.nav === 'system') renderSystem();
+    if (state.nav === 'system') {
+      renderSystem();
+      if (!state.updateInfo || state.updateInfo.check_error) checkUpdate(false).catch(() => {});
+    }
   });
 
   $('#login-form').onsubmit = async (e) => {
@@ -1398,13 +1422,23 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
       b.textContent = '重启恢复中...';
       toast(`已校验并安装 ${res.latest_version || '新版'}，正在重启`);
       closeSSE();
+      const prevVer = res.current_version || state.bootVersion;
+      const targetVer = res.latest_version || '';
       for (let i = 0; i < 20; i++) {
         await new Promise(r => setTimeout(r, 1500));
         try {
           const check = await fetch('/api/overview');
-          if (check.ok || check.status === 401) {
+          if (check.status === 401) {
             location.reload();
             return;
+          }
+          if (check.ok) {
+            const ov = await check.json().catch(() => ({}));
+            const ready = (targetVer && ov.version === targetVer) || (prevVer && ov.version && ov.version !== prevVer) || i >= 4;
+            if (ready) {
+              location.reload();
+              return;
+            }
           }
         } catch {}
       }

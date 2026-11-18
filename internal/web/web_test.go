@@ -13,6 +13,7 @@ import (
 	"snapgfw/internal/config"
 	"snapgfw/internal/engine"
 	"snapgfw/internal/store"
+	"snapgfw/internal/updater"
 )
 
 func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
@@ -34,6 +35,7 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 
 	eng := engine.New(cfg, ps.Get(), as, nil, nil)
 	srv := NewServer(filepath.Join(dir, "config.json"), cfg, ps, as, eng, nil, nil, nil)
+	srv.SetUpdater(updater.New("v0.3.2", nil))
 	h := srv.Handler()
 
 	// 1. Unauthenticated overview must fail with 401
@@ -115,12 +117,20 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 		t.Fatalf("unexpected UI response: code=%d", rec.Code)
 	}
 
-	// 8. Verify GET /api/system/update returns structured version payload
+	// 8. Verify GET /api/overview returns version and GET /api/system/update returns structured payload
+	req = httptest.NewRequest(http.MethodGet, "/api/overview", nil)
+	req.AddCookie(cookies[0])
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"version":"v0.3.2"`)) {
+		t.Fatalf("unexpected overview response: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/api/system/update", nil)
 	req.AddCookie(cookies[0])
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"current_version"`)) {
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"current_version":"v0.3.2"`)) {
 		t.Fatalf("unexpected update check response: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

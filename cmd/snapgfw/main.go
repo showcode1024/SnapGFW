@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,7 +32,7 @@ import (
 	"snapgfw/internal/web"
 )
 
-var version = "v0.3.1"
+var version = "v0.3.2"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -165,14 +166,17 @@ func runServe(args []string) {
 		default:
 		}
 	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	httpSrv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Propagate root lifecycle cancellation into long-lived SSE connections
+		// so Shutdown completes promptly instead of stalling self-update restarts.
+		BaseContext: func(_ net.Listener) context.Context { return ctx },
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Periodic read-only refresh of runman-agent container inventory
 	go func() {
@@ -244,6 +248,7 @@ func runServe(args []string) {
 	shCtx, shCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shCancel()
 	_ = httpSrv.Shutdown(shCtx)
+	_ = httpSrv.Close()
 }
 
 func runSetPassword(args []string) {

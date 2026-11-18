@@ -89,6 +89,13 @@ func (s *Server) SetUpdater(u *updater.Updater) {
 	}
 }
 
+func (s *Server) currentVersion() string {
+	if s.updater != nil && s.updater.CurrentVersion() != "" {
+		return s.updater.CurrentVersion()
+	}
+	return "dev"
+}
+
 // Handler builds the complete HTTP router with auth, CSRF, and security headers.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -289,6 +296,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"version":            s.currentVersion(),
 		"active_preset":      pol.ActivePreset,
 		"global_bypass":      pol.GlobalBypass,
 		"bridge_iface":       cfg.BridgeIface,

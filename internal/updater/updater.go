@@ -83,6 +83,11 @@ func New(currentVersion string, onRestart func()) *Updater {
 	}
 }
 
+// CurrentVersion returns the running binary's declared release tag.
+func (u *Updater) CurrentVersion() string {
+	return u.currentVersion
+}
+
 func defaultSmokeTest(ctx context.Context, binPath string) error {
 	out, err := exec.CommandContext(ctx, binPath, "version").CombinedOutput()
 	if err != nil {
