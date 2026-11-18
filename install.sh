@@ -209,7 +209,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now snapgfw.service
+systemctl enable snapgfw.service
+systemctl restart snapgfw.service
 sleep 1
 systemctl is-active --quiet snapgfw.service || die "snapgfw failed to start; inspect: journalctl -u snapgfw -e"
 
