@@ -23,9 +23,11 @@ type QuarantinedTenant struct {
 
 // QuarantineManager tracks sliding-window L7 violations per tenant and enforces temporary bans.
 type QuarantineManager struct {
-	tableName string
-	audit     *store.AuditStore
-	notifier  *notify.Notifier
+	tableName  string
+	audit      *store.AuditStore
+	notifier   *notify.Notifier
+	applyBan   func(tableName, tenantIP string, durationSec int) error
+	applyUnban func(tableName, tenantIP string) error
 
 	mu     sync.Mutex
 	hits   map[string][]time.Time
@@ -35,11 +37,13 @@ type QuarantineManager struct {
 // NewQuarantineManager creates a QuarantineManager bound to an nftables table.
 func NewQuarantineManager(tableName string, audit *store.AuditStore, notifier *notify.Notifier) *QuarantineManager {
 	return &QuarantineManager{
-		tableName: tableName,
-		audit:     audit,
-		notifier:  notifier,
-		hits:      make(map[string][]time.Time),
-		banned:    make(map[string]QuarantinedTenant),
+		tableName:  tableName,
+		audit:      audit,
+		notifier:   notifier,
+		applyBan:   netfilter.QuarantineIP,
+		applyUnban: netfilter.UnquarantineIP,
+		hits:       make(map[string][]time.Time),
+		banned:     make(map[string]QuarantinedTenant),
 	}
 }
 
@@ -94,8 +98,10 @@ func (q *QuarantineManager) RecordBlock(pol model.Policy, tenantIP, instanceID, 
 
 // Ban adds tenantIP to the kernel quarantine set and emits an audit event + alert.
 func (q *QuarantineManager) Ban(tenantIP, instanceID, hostname, reason string, durationSec int, flushCt bool, notifyCfg model.NotifyConfig) error {
-	if err := netfilter.QuarantineIP(q.tableName, tenantIP, durationSec); err != nil {
-		return err
+	if q.applyBan != nil {
+		if err := q.applyBan(q.tableName, tenantIP, durationSec); err != nil {
+			return err
+		}
 	}
 	if flushCt {
 		netfilter.FlushConntrackForIP(tenantIP)
@@ -138,8 +144,10 @@ func (q *QuarantineManager) Ban(tenantIP, instanceID, hostname, reason string, d
 
 // Unban removes tenantIP from kernel quarantine immediately.
 func (q *QuarantineManager) Unban(tenantIP string) error {
-	if err := netfilter.UnquarantineIP(q.tableName, tenantIP); err != nil {
-		return err
+	if q.applyUnban != nil {
+		if err := q.applyUnban(q.tableName, tenantIP); err != nil {
+			return err
+		}
 	}
 	q.mu.Lock()
 	delete(q.banned, tenantIP)

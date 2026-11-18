@@ -62,6 +62,8 @@ func TestEngine_TCPReassemblyOutOfOrderAndQuarantine(t *testing.T) {
 		t.Fatal(err)
 	}
 	qm := NewQuarantineManager(cfg.NftTable, audit, nil)
+	qm.applyBan = func(_, _ string, _ int) error { return nil }
+	qm.applyUnban = func(_, _ string) error { return nil }
 	eng := New(cfg, pol, audit, nil, qm)
 
 	peerIP := net.ParseIP("198.51.100.10")
