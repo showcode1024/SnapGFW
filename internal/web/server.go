@@ -48,8 +48,9 @@ type Server struct {
 	engine     *engine.Engine
 	discovery  *runman.Discovery
 	quarantine *engine.QuarantineManager
-	notifier   *notify.Notifier
-	updater    *updater.Updater
+	notifier      *notify.Notifier
+	updater       *updater.Updater
+	applyConfigFn func(config.Config, model.Policy) error
 
 	authMu   sync.Mutex
 	sessions map[string]time.Time
@@ -89,6 +90,18 @@ func (s *Server) SetUpdater(u *updater.Updater) {
 	}
 }
 
+// SetApplyConfigHook registers the runtime nftables/engine re-applier invoked on config changes.
+func (s *Server) SetApplyConfigHook(fn func(config.Config, model.Policy) error) {
+	s.applyConfigFn = fn
+}
+
+// Config returns a thread-safe snapshot of the current runtime configuration.
+func (s *Server) Config() config.Config {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.cfg
+}
+
 func (s *Server) currentVersion() string {
 	if s.updater != nil && s.updater.CurrentVersion() != "" {
 		return s.updater.CurrentVersion()
@@ -121,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/logs/stream", s.requireAuth(false, s.handleLogsStream))
 
 	mux.HandleFunc("POST /api/geo/download", s.requireAuth(true, s.handleGeoDownload))
+	mux.HandleFunc("POST /api/settings/network", s.requireAuth(true, s.handleUpdateNetwork))
 	mux.HandleFunc("POST /api/settings/password", s.requireAuth(true, s.handleChangePassword))
 	mux.HandleFunc("POST /api/notify/test", s.requireAuth(true, s.handleNotifyTest))
 	mux.HandleFunc("GET /api/system/update", s.requireAuth(false, s.handleCheckUpdate))
@@ -300,6 +314,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"active_preset":      pol.ActivePreset,
 		"global_bypass":      pol.GlobalBypass,
 		"bridge_iface":       cfg.BridgeIface,
+		"bridge_present":     netfilter.BridgeExists(cfg.BridgeIface),
+		"available_bridges":  netfilter.ListBridges(),
+		"host_proxy_compat":  !cfg.DisableHostProxy,
 		"nft_table":          cfg.NftTable,
 		"engine":             engStats,
 		"audit_blocks":       blocks,
@@ -656,6 +673,58 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	s.authMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleUpdateNetwork(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BridgeIface     string `json:"bridge_iface"`
+		HostProxyCompat *bool  `json:"host_proxy_compat"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	br := strings.TrimSpace(req.BridgeIface)
+	if br == "" {
+		writeErr(w, http.StatusBadRequest, "bridge_iface is required")
+		return
+	}
+
+	s.cfgMu.RLock()
+	nextCfg := s.cfg
+	s.cfgMu.RUnlock()
+
+	nextCfg.BridgeIface = br
+	if req.HostProxyCompat != nil {
+		nextCfg.DisableHostProxy = !*req.HostProxyCompat
+	}
+	if err := nextCfg.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.applyConfigFn != nil {
+		if err := s.applyConfigFn(nextCfg, s.policy.Get()); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if s.cfgPath != "" {
+		if err := config.Save(s.cfgPath, nextCfg); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	s.cfgMu.Lock()
+	s.cfg = nextCfg
+	s.cfgMu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                true,
+		"bridge_iface":      nextCfg.BridgeIface,
+		"bridge_present":    netfilter.BridgeExists(nextCfg.BridgeIface),
+		"available_bridges": netfilter.ListBridges(),
+		"host_proxy_compat": !nextCfg.DisableHostProxy,
+	})
 }
 
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {

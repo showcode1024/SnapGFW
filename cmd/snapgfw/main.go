@@ -32,7 +32,7 @@ import (
 	"snapgfw/internal/web"
 )
 
-var version = "v0.3.2"
+var version = "v0.4.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -151,21 +151,28 @@ func runServe(args []string) {
 		}()
 	}
 
-	ps.OnChange(func(next model.Policy) error {
+	srv := web.NewServer(*cfgPath, cfg, ps, as, eng, disc, qm, notif)
+	srv.SetApplyConfigHook(func(nextCfg config.Config, pol model.Policy) error {
 		if *noEngine {
-			eng.UpdatePolicy(next)
+			eng.UpdatePolicy(pol)
 			return nil
 		}
-		return web.ApplyPolicyRuntime(cfg, next, eng)
+		return web.ApplyPolicyRuntime(nextCfg, pol, eng)
 	})
-
-	srv := web.NewServer(*cfgPath, cfg, ps, as, eng, disc, qm, notif)
 	srv.SetUpdater(updater.New(version, func() {
 		select {
 		case restartCh <- struct{}{}:
 		default:
 		}
 	}))
+
+	ps.OnChange(func(next model.Policy) error {
+		if *noEngine {
+			eng.UpdatePolicy(next)
+			return nil
+		}
+		return web.ApplyPolicyRuntime(srv.Config(), next, eng)
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

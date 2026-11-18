@@ -375,6 +375,25 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
       <div class="sys-scroll">
         <div class="sys-sheet">
           <div class="sys-row">
+            <div class="sys-lbl">监听网桥</div>
+            <div class="sys-ctrl">
+              <div class="sys-inline">
+                <input id="sys-bridge" class="mono" style="max-width:180px" placeholder="如 podman1 / rmbr0">
+                <span style="display:inline-flex;align-items:center;gap:6px;font:400 12px var(--mono);color:var(--text-2)"><span id="dot-bridge" class="dot"></span><span id="txt-bridge-status">-</span></span>
+                <span style="flex:1"></span>
+                <button type="button" id="btn-save-network" class="btn btn-primary">应用网桥</button>
+              </div>
+              <div id="sys-bridge-chips" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
+              <div class="sys-inline" style="padding-top:2px">
+                <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text-2)">
+                  <button type="button" id="sys-host-proxy" class="switch" role="switch" aria-checked="true"></button>
+                  <span>宿主机代理兼容 <span style="color:var(--text-muted)">(narwhal-agent / Podman / Docker 入站用户态转发)</span></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="sys-row">
             <div class="sys-lbl">受信任租户</div>
             <div class="sys-ctrl">
               <div class="sys-inline">
@@ -655,9 +674,11 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     const ov = state.overview;
     if (!ov) return;
     const bypass = !!ov.global_bypass;
+    const missingBr = ov.bridge_present === false;
     const dot = $('#sb-status-dot');
-    dot.className = 'dot' + (bypass ? ' warn' : '');
-    $('#sb-iface-name').textContent = bypass ? '旁路中' : (ov.bridge_iface || 'rmbr0');
+    dot.className = 'dot' + ((bypass || missingBr) ? ' warn' : '');
+    const brName = ov.bridge_iface || 'rmbr0';
+    $('#sb-iface-name').textContent = bypass ? '旁路中' : (missingBr ? `${brName} · 未找到` : brName);
     $('#sb-mem').textContent = `内存 ${(ov.heap_alloc_mb || 0).toFixed(1)} MB`;
     $('#sb-qdrop').textContent = `队列 ${ov.engine?.queue_dropped || 0}`;
     $('#sb-version').textContent = ov.version || '-';
@@ -1148,10 +1169,30 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     $('#sys-alert-blk').setAttribute('aria-checked', String(!!n.alert_on_block));
     $('#sys-alert-ban').setAttribute('aria-checked', String(!!n.alert_on_ban));
     if (state.overview) {
-      $('#dot-geosite').className = 'dot' + (state.overview.geosite_present ? '' : ' warn');
-      $('#txt-geosite').textContent = state.overview.geosite_present ? 'GeoSite · 已就绪' : 'GeoSite · 兜底模式';
-      $('#dot-geoip').className = 'dot' + (state.overview.geoip_present ? '' : ' muted');
-      $('#txt-geoip').textContent = state.overview.geoip_present ? 'GeoIP · 已就绪' : 'GeoIP · 未下载';
+      const ov = state.overview;
+      $('#sys-bridge').value = ov.bridge_iface || 'rmbr0';
+      const brOk = ov.bridge_present !== false;
+      $('#dot-bridge').className = 'dot' + (brOk ? '' : ' warn');
+      $('#txt-bridge-status').textContent = brOk ? '接口在线' : '接口未找到（流量未经过）';
+      $('#sys-host-proxy').setAttribute('aria-checked', String(ov.host_proxy_compat !== false));
+      const chips = $('#sys-bridge-chips');
+      const brs = ov.available_bridges || [];
+      if (brs.length) {
+        chips.innerHTML = '<span style="font-size:11px;color:var(--text-muted)">检测到网桥:</span>' + brs.map(b => {
+          const active = b.name === ov.bridge_iface;
+          const meta = `${b.up ? 'UP' : 'DOWN'}${b.ports ? ' · ' + b.ports + '口' : ''}`;
+          return `<button type="button" class="btn btn-quiet" data-pick-br="${esc(b.name)}" style="height:24px;padding:0 8px;font:400 11px var(--mono);${active ? 'color:var(--text);border-color:var(--border-strong);background:var(--bg-hover)' : ''}">${esc(b.name)} (${meta})</button>`;
+        }).join('');
+        chips.querySelectorAll('[data-pick-br]').forEach(btn => {
+          btn.onclick = () => { $('#sys-bridge').value = btn.dataset.pickBr; };
+        });
+      } else {
+        chips.innerHTML = '';
+      }
+      $('#dot-geosite').className = 'dot' + (ov.geosite_present ? '' : ' warn');
+      $('#txt-geosite').textContent = ov.geosite_present ? 'GeoSite · 已就绪' : 'GeoSite · 兜底模式';
+      $('#dot-geoip').className = 'dot' + (ov.geoip_present ? '' : ' muted');
+      $('#txt-geoip').textContent = ov.geoip_present ? 'GeoIP · 已就绪' : 'GeoIP · 未下载';
     }
     renderUpdateInfo();
   }
@@ -1364,6 +1405,24 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
   $('#btn-log-clear').onclick = () => { state.logs = []; renderLogs(); };
 
   // System actions
+  $('#sys-host-proxy').onclick = () => {
+    const el = $('#sys-host-proxy');
+    el.setAttribute('aria-checked', String(el.getAttribute('aria-checked') !== 'true'));
+  };
+  $('#btn-save-network').onclick = async () => {
+    const b = $('#btn-save-network');
+    const br = $('#sys-bridge').value.trim();
+    const compat = $('#sys-host-proxy').getAttribute('aria-checked') === 'true';
+    if (!br) { toast('请输入网桥名称', true); return; }
+    b.disabled = true; b.textContent = '应用中...';
+    try {
+      await api('POST', '/api/settings/network', { bridge_iface: br, host_proxy_compat: compat });
+      await refreshTelemetry();
+      renderSystem();
+      toast(`已切换到网桥 ${br} 并实时下发规则`);
+    } catch (err) { toast(err.message, true); }
+    finally { b.disabled = false; b.textContent = '应用网桥'; }
+  };
   $('#btn-save-trusted').onclick = async () => {
     state.policy.trusted_tenants = splitCSV($('#sys-trusted').value);
     try { await savePolicy('白名单已保存'); } catch (err) { toast(err.message, true); }

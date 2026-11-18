@@ -18,6 +18,7 @@ type Config struct {
 	DataDir          string `json:"data_dir"`
 	RunmanDataDir    string `json:"runman_data_dir"`
 	BridgeIface      string `json:"bridge_iface"`
+	DisableHostProxy bool   `json:"disable_host_proxy,omitempty"`
 	NftTable         string `json:"nft_table"`
 	QueueBase        uint16 `json:"queue_base"`
 	ConnMarkAccept   uint32 `json:"conn_mark_accept"`

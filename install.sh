@@ -14,7 +14,8 @@ DATA_DIR="/var/lib/snapgfw"
 SERVICE_FILE="/etc/systemd/system/snapgfw.service"
 
 LISTEN="0.0.0.0:9090"
-BRIDGE="rmbr0"
+BRIDGE=""
+BRIDGE_EXPLICIT=0
 LOW_MEM=0
 DISABLE_RFW=0
 WITH_GEO=0
@@ -34,7 +35,7 @@ Usage: install.sh [options]
   --from-bin PATH       Install using a prebuilt local binary (recommended for custom builds)
   --release-url URL     Download snapgfw-linux-<arch> and SHA256SUMS from URL
   --listen ADDR         Web panel listen address (default: 0.0.0.0:9090)
-  --bridge IFACE        Container bridge interface to protect (default: rmbr0)
+  --bridge IFACE        Container bridge interface to protect (default: auto-detect rmbr0/podman/docker)
   --low-mem             Enable low-memory tuning (GOMEMLIMIT=64MiB)
   --disable-rfw         Stop and disable runman's built-in rfw.service to avoid overlap
   --with-geo            Download latest geosite.dat and geoip.dat into /var/lib/snapgfw/
@@ -49,7 +50,7 @@ while [[ $# -gt 0 ]]; do
     --from-bin)    FROM_BIN="${2:?}"; shift 2 ;;
     --release-url) RELEASE_URL="${2:?}"; shift 2 ;;
     --listen)      LISTEN="${2:?}"; shift 2 ;;
-    --bridge)      BRIDGE="${2:?}"; shift 2 ;;
+    --bridge)      BRIDGE="${2:?}"; BRIDGE_EXPLICIT=1; shift 2 ;;
     --low-mem)     LOW_MEM=1; shift ;;
     --disable-rfw) DISABLE_RFW=1; shift ;;
     --with-geo)    WITH_GEO=1; shift ;;
@@ -106,8 +107,47 @@ done
 nft list tables >/dev/null 2>&1 || die "nftables is unavailable in this kernel/environment"
 [[ -e /proc/net/netfilter/nfnetlink_queue || -d /proc/sys/net/netfilter ]] || warn "netfilter sysfs entries missing; verify nfnetlink_queue support"
 
+detect_bridge() {
+  if [[ -d /sys/class/net/rmbr0 ]]; then
+    echo "rmbr0"
+    return
+  fi
+  local best="" best_score=-1 d name state ports score
+  for d in /sys/class/net/*/bridge; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$(dirname "$d")")"
+    state="$(cat "/sys/class/net/${name}/operstate" 2>/dev/null || echo down)"
+    ports="$(ls -A "/sys/class/net/${name}/brif" 2>/dev/null | wc -l | tr -d ' ')"
+    score=0
+    [[ "$state" == "up" ]] && score=$((score + 100))
+    [[ "$ports" -gt 0 ]] && score=$((score + 50 + ports))
+    case "$name" in
+      podman*|cni-podman*) score=$((score + 20)) ;;
+      br-*|lxdbr*|incusbr*) score=$((score + 15)) ;;
+      docker0|virbr0) score=$((score + 10)) ;;
+    esac
+    if [[ "$score" -gt "$best_score" ]]; then
+      best_score="$score"
+      best="$name"
+    fi
+  done
+  if [[ -n "$best" && "$best_score" -ge 100 ]]; then
+    echo "$best"
+  else
+    echo "rmbr0"
+  fi
+}
+
+if [[ "$BRIDGE_EXPLICIT" -eq 1 ]]; then
+  [[ "$BRIDGE" =~ ^[A-Za-z0-9_.-]+$ ]] || die "invalid --bridge interface name: $BRIDGE"
+else
+  BRIDGE="$(detect_bridge)"
+fi
+
 if ! ip link show "$BRIDGE" >/dev/null 2>&1; then
-  warn "bridge interface '$BRIDGE' not found yet (normal if runman-agent has not created instances yet)"
+  warn "bridge interface '$BRIDGE' not found yet (can be changed later in Web UI: 系统 -> 监听网桥)"
+else
+  log "selected container bridge: $BRIDGE"
 fi
 
 # 3. Install or atomically upgrade binary
@@ -160,7 +200,16 @@ EOF
   PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16 || true)
   printf '%s\n' "$PASSWORD" | "$BIN" set-password -config "$CFG_FILE" >/dev/null
 else
-  log "keeping existing $CFG_FILE"
+  if [[ "$BRIDGE_EXPLICIT" -eq 1 ]]; then
+    log "updating bridge_iface to '${BRIDGE}' in $CFG_FILE"
+    sed -i -E "s/(\"bridge_iface\"[[:space:]]*:[[:space:]]*\")[^\"]*(\")/\1${BRIDGE}\2/" "$CFG_FILE"
+  else
+    log "keeping existing $CFG_FILE"
+    CUR_BR="$(sed -nE 's/.*"bridge_iface"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$CFG_FILE" | head -n 1)"
+    if [[ -n "$CUR_BR" ]] && ! ip link show "$CUR_BR" >/dev/null 2>&1 && ip link show "$BRIDGE" >/dev/null 2>&1; then
+      warn "configured bridge '${CUR_BR}' not found on host; detected active bridge '${BRIDGE}' (switch via Web UI '系统 -> 监听网桥' or re-run with --bridge ${BRIDGE})"
+    fi
+  fi
 fi
 
 # 5. Optional GeoSite & GeoIP download

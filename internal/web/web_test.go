@@ -12,6 +12,7 @@ import (
 
 	"snapgfw/internal/config"
 	"snapgfw/internal/engine"
+	"snapgfw/internal/model"
 	"snapgfw/internal/store"
 	"snapgfw/internal/updater"
 )
@@ -122,8 +123,26 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 	req.AddCookie(cookies[0])
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"version":"v0.3.2"`)) {
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"version":"v0.3.2"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"host_proxy_compat":true`)) {
 		t.Fatalf("unexpected overview response: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 9. Verify POST /api/settings/network updates bridge_iface and host_proxy_compat atomically
+	var appliedBridge string
+	var appliedDisableProxy bool
+	srv.SetApplyConfigHook(func(nextCfg config.Config, _ model.Policy) error {
+		appliedBridge = nextCfg.BridgeIface
+		appliedDisableProxy = nextCfg.DisableHostProxy
+		return nil
+	})
+	netBody := bytes.NewBufferString(`{"bridge_iface":"podman1","host_proxy_compat":false}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/network", netBody)
+	req.AddCookie(cookies[0])
+	req.Header.Set("X-Snapgfw", "1")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || appliedBridge != "podman1" || !appliedDisableProxy || srv.Config().BridgeIface != "podman1" {
+		t.Fatalf("unexpected network update response: code=%d body=%s applied=%s/%v", rec.Code, rec.Body.String(), appliedBridge, appliedDisableProxy)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/system/update", nil)

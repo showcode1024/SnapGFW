@@ -12,8 +12,10 @@ import (
 )
 
 // RenderNFT generates the complete atomic nftables ruleset for `table inet <NftTable>`.
-// It operates purely in `forward` on the container bridge (`rmbr0` by default) and NEVER touches
-// `inet runman` or `bridge runman`, ensuring zero interference with runman-agent's self-healing loop.
+// It inspects both kernel-forwarded bridge traffic (`forward`) and, unless DisableHostProxy is set,
+// host userspace proxy traffic entering the container bridge (`output` original + `input` reply,
+// covering narwhal-agent / docker-proxy / Podman port forwards) while exempting host non-bridge
+// traffic and container-to-host local services (such as DNS 53).
 func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 	var b strings.Builder
 	tbl := cfg.NftTable
@@ -126,26 +128,69 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 	}
 
 	// 4. Conntrack offload & L7 DPI NFQUEUE dispatch (4 queues encode flow & packet direction unambiguously)
-	if !hasEnabledProtocol(pol) {
-		b.WriteString("    # no L7 protocol detectors enabled: skip NFQUEUE\n")
-		b.WriteString("  }\n}\n")
-		return b.String(), nil
-	}
-
-	fmt.Fprintf(&b, "    ct mark %d counter accept\n", cfg.ConnMarkAccept)
-	fmt.Fprintf(&b, "    ct mark %d counter drop\n", cfg.ConnMarkDrop)
-	b.WriteString("    meta l4proto != { tcp, udp } accept\n")
-
+	dpiEnabled := hasEnabledProtocol(pol)
 	qInOrig := cfg.QueueBase
 	qOutOrig := cfg.QueueBase + 1
 	qOutReply := cfg.QueueBase + 2
 	qInReply := cfg.QueueBase + 3
-	fmt.Fprintf(&b, "    oifname %q iifname != %q ct direction original counter queue num %d bypass\n", br, br, qInOrig)
-	fmt.Fprintf(&b, "    iifname %q oifname != %q ct direction original counter queue num %d bypass\n", br, br, qOutOrig)
-	fmt.Fprintf(&b, "    oifname %q iifname != %q ct direction reply counter queue num %d bypass\n", br, br, qOutReply)
-	fmt.Fprintf(&b, "    iifname %q oifname != %q ct direction reply counter queue num %d bypass\n", br, br, qInReply)
+	if dpiEnabled {
+		fmt.Fprintf(&b, "    ct mark %d counter accept\n", cfg.ConnMarkAccept)
+		fmt.Fprintf(&b, "    ct mark %d counter drop\n", cfg.ConnMarkDrop)
+		b.WriteString("    meta l4proto != { tcp, udp } accept\n")
+		fmt.Fprintf(&b, "    oifname %q iifname != %q ct direction original counter queue num %d bypass\n", br, br, qInOrig)
+		fmt.Fprintf(&b, "    iifname %q oifname != %q ct direction original counter queue num %d bypass\n", br, br, qOutOrig)
+		fmt.Fprintf(&b, "    oifname %q iifname != %q ct direction reply counter queue num %d bypass\n", br, br, qOutReply)
+		fmt.Fprintf(&b, "    iifname %q oifname != %q ct direction reply counter queue num %d bypass\n", br, br, qInReply)
+	} else {
+		b.WriteString("    # no L7 protocol detectors enabled: skip NFQUEUE\n")
+	}
+	b.WriteString("  }\n")
 
-	b.WriteString("  }\n}\n")
+	// 5. Host userspace proxy compatibility (narwhal-agent / docker-proxy / Podman):
+	//    When a host process terminates inbound ports and dials containers over `br`, packets cross
+	//    `output` (oifname br, ct direction original) and `input` (iifname br, ct direction reply)
+	//    instead of `forward`. Container-initiated host services (e.g. DNS 53) have original in
+	//    `input` and reply in `output`, so they bypass both chains untouched.
+	if !cfg.DisableHostProxy {
+		b.WriteString("\n  chain output {\n")
+		b.WriteString("    type filter hook output priority filter + 10; policy accept;\n")
+		fmt.Fprintf(&b, "    oifname != %q accept\n", br)
+		b.WriteString("    ct direction reply accept\n")
+		b.WriteString("    ct direction original ip daddr @quarantine4 counter drop\n")
+		b.WriteString("    ct direction original ip6 daddr @quarantine6 counter drop\n")
+		for _, r := range sorted {
+			for _, line := range renderOutputPortRule(br, r) {
+				fmt.Fprintf(&b, "    %s\n", line)
+			}
+		}
+		if dpiEnabled {
+			fmt.Fprintf(&b, "    ct direction original ct mark %d counter accept\n", cfg.ConnMarkAccept)
+			fmt.Fprintf(&b, "    ct direction original ct mark %d counter drop\n", cfg.ConnMarkDrop)
+			b.WriteString("    meta l4proto != { tcp, udp } accept\n")
+			fmt.Fprintf(&b, "    oifname %q ct direction original counter queue num %d bypass\n", br, qInOrig)
+		} else {
+			b.WriteString("    # no L7 protocol detectors enabled: skip NFQUEUE\n")
+		}
+		b.WriteString("  }\n")
+
+		b.WriteString("\n  chain input {\n")
+		b.WriteString("    type filter hook input priority filter + 10; policy accept;\n")
+		fmt.Fprintf(&b, "    iifname != %q accept\n", br)
+		b.WriteString("    ct direction original accept\n")
+		b.WriteString("    ct direction reply ip saddr @quarantine4 counter drop\n")
+		b.WriteString("    ct direction reply ip6 saddr @quarantine6 counter drop\n")
+		if dpiEnabled {
+			fmt.Fprintf(&b, "    ct direction reply ct mark %d counter accept\n", cfg.ConnMarkAccept)
+			fmt.Fprintf(&b, "    ct direction reply ct mark %d counter drop\n", cfg.ConnMarkDrop)
+			b.WriteString("    meta l4proto != { tcp, udp } accept\n")
+			fmt.Fprintf(&b, "    iifname %q ct direction reply counter queue num %d bypass\n", br, qInReply)
+		} else {
+			b.WriteString("    # no L7 protocol detectors enabled: skip NFQUEUE\n")
+		}
+		b.WriteString("  }\n")
+	}
+
+	b.WriteString("}\n")
 	return b.String(), nil
 }
 
@@ -255,6 +300,56 @@ func renderPortRule(br string, r model.PortRule) ([]string, error) {
 		}
 	}
 	return lines, nil
+}
+
+// renderOutputPortRule adapts inbound container-side L4 rules for host userspace proxy traffic
+// traversing `hook output` toward `br`. Host-mapped port and external peer CIDR/GeoIP filters
+// remain forward-only because userspace proxies terminate external sockets before dialing `br`.
+func renderOutputPortRule(br string, r model.PortRule) []string {
+	if r.Direction != model.DirInbound && r.Direction != model.DirBoth {
+		return nil
+	}
+	if r.Scope == model.PortScopeHostMapped {
+		return nil
+	}
+	if r.PeerType != "" && r.PeerType != "any" {
+		return nil
+	}
+
+	l4Protos := []string{r.L4Proto}
+	if r.L4Proto == "both" {
+		l4Protos = []string{"tcp", "udp"}
+	}
+	verdict := "drop"
+	if r.Action == model.ActionAllow {
+		verdict = "accept"
+	}
+
+	var lines []string
+	for _, l4 := range l4Protos {
+		parts := []string{fmt.Sprintf("oifname %q ct direction original", br)}
+		if r.TenantIP != "" {
+			parts = append(parts, fmt.Sprintf("%s daddr %s", ipFamily(r.TenantIP), r.TenantIP))
+		}
+		switch l4 {
+		case "tcp", "udp":
+			parts = append(parts, fmt.Sprintf("meta l4proto %s", l4))
+			if r.PortStart > 0 {
+				portExpr := formatPortExpr(r.PortStart, r.PortEnd)
+				if r.Scope == model.PortScopeSrc {
+					parts = append(parts, fmt.Sprintf("%s sport %s", l4, portExpr))
+				} else {
+					parts = append(parts, fmt.Sprintf("%s dport %s", l4, portExpr))
+				}
+			}
+		case "icmp":
+			parts = append(parts, "meta l4proto { icmp, ipv6-icmp }")
+		case "all":
+		}
+		parts = append(parts, "counter "+verdict)
+		lines = append(lines, strings.Join(parts, " "))
+	}
+	return lines
 }
 
 func formatPortExpr(start, end uint16) string {

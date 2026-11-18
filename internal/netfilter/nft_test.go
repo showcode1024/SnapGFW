@@ -32,6 +32,17 @@ func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 		L4Proto:   "tcp",
 		PortStart: 22022,
 		Action:    model.ActionBlock,
+	}, model.PortRule{
+		ID:        "block-low-guest-ports",
+		Name:      "封容器入站低端口",
+		Enabled:   true,
+		Priority:  140,
+		Direction: model.DirInbound,
+		Scope:     model.PortScopeDst,
+		L4Proto:   "tcp",
+		PortStart: 1,
+		PortEnd:   20000,
+		Action:    model.ActionBlock,
 	})
 
 	script, err := RenderNFT(cfg, pol)
@@ -41,15 +52,24 @@ func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 	checks := []string{
 		`table inet snapgfw`,
 		`type filter hook forward priority filter + 10`,
+		`type filter hook output priority filter + 10`,
+		`type filter hook input priority filter + 10`,
 		`iifname != "rmbr0" oifname != "rmbr0" accept`,
+		`oifname != "rmbr0" accept`,
+		`iifname != "rmbr0" accept`,
+		`ct direction reply accept`,
+		`ct direction original accept`,
 		`ip saddr 10.91.0.2 meta l4proto tcp tcp dport 25 counter accept`,
 		`ct original protocol tcp ct original proto-dst 22022 counter drop`,
+		`oifname "rmbr0" ct direction original meta l4proto tcp tcp dport 1-20000 counter drop`,
 		`ct mark 2001 counter accept`,
 		`ct mark 2002 counter drop`,
 		`queue num 200 bypass`,
 		`queue num 201 bypass`,
 		`queue num 202 bypass`,
 		`queue num 203 bypass`,
+		`oifname "rmbr0" ct direction original counter queue num 200 bypass`,
+		`iifname "rmbr0" ct direction reply counter queue num 203 bypass`,
 	}
 	for _, want := range checks {
 		if !strings.Contains(script, want) {
@@ -61,6 +81,17 @@ func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 	idxBlock := strings.Index(script, `iifname "rmbr0" oifname != "rmbr0" ct direction original meta l4proto tcp tcp dport 25 counter drop`)
 	if idxAllow < 0 || idxBlock < 0 || idxAllow >= idxBlock {
 		t.Fatalf("expected priority 200 allow rule before priority 100 block rule")
+	}
+
+	// Host-proxy chains can be opted out via DisableHostProxy
+	cfgNoProxy := cfg
+	cfgNoProxy.DisableHostProxy = true
+	noProxyScript, err := RenderNFT(cfgNoProxy, pol)
+	if err != nil {
+		t.Fatalf("RenderNFT disable host proxy failed: %v", err)
+	}
+	if strings.Contains(noProxyScript, "hook output") || strings.Contains(noProxyScript, "hook input") {
+		t.Fatalf("expected DisableHostProxy=true to omit output/input chains:\n%s", noProxyScript)
 	}
 
 	// Empty default policy skips NFQUEUE dispatch completely for zero fastpath overhead
