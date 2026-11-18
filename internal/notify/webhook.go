@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"natgfw/internal/model"
+	"snapgfw/internal/model"
 )
 
 // Notifier dispatches rate-limited asynchronous alerts to Telegram and/or generic Webhooks.

@@ -20,17 +20,17 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"natgfw/internal/config"
-	"natgfw/internal/engine"
-	"natgfw/internal/model"
-	"natgfw/internal/netfilter"
-	"natgfw/internal/notify"
-	"natgfw/internal/runman"
-	"natgfw/internal/store"
-	"natgfw/internal/web"
+	"snapgfw/internal/config"
+	"snapgfw/internal/engine"
+	"snapgfw/internal/model"
+	"snapgfw/internal/netfilter"
+	"snapgfw/internal/notify"
+	"snapgfw/internal/runman"
+	"snapgfw/internal/store"
+	"snapgfw/internal/web"
 )
 
-var version = "v0.1.0"
+var version = "v0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -51,7 +51,7 @@ func main() {
 	case "validate":
 		runValidate(os.Args[2:])
 	case "version", "--version", "-v":
-		fmt.Printf("natgfw %s\n", version)
+		fmt.Printf("snapgfw %s\n", version)
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -66,21 +66,21 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`natgfw — KVM + LXC/runman NAT DPI 防火墙与定制控制面板
+	fmt.Println(`SnapGFW — KVM + LXC/runman NAT DPI 防火墙与控制面板
 
 用法:
-  natgfw serve [-config /etc/natgfw/config.json]
-  natgfw set-password [-config /etc/natgfw/config.json]   (从 stdin 读取密码)
-  natgfw apply-preset [-config /etc/natgfw/config.json] <preset_id>
-  natgfw export-policy [-config /etc/natgfw/config.json]
-  natgfw import-policy [-config /etc/natgfw/config.json] <policy.json>
-  natgfw validate [-config /etc/natgfw/config.json]
-  natgfw version`)
+  snapgfw serve [-config /etc/snapgfw/config.json]
+  snapgfw set-password [-config /etc/snapgfw/config.json]   (从 stdin 读取密码)
+  snapgfw apply-preset [-config /etc/snapgfw/config.json] <preset_id>
+  snapgfw export-policy [-config /etc/snapgfw/config.json]
+  snapgfw import-policy [-config /etc/snapgfw/config.json] <policy.json>
+  snapgfw validate [-config /etc/snapgfw/config.json]
+  snapgfw version`)
 }
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/natgfw/config.json", "path to config.json")
+	cfgPath := fs.String("config", "/etc/snapgfw/config.json", "path to config.json")
 	listenOverride := fs.String("listen", "", "override web panel listen address")
 	bridgeOverride := fs.String("bridge", "", "override container bridge interface")
 	noEngine := fs.Bool("panel-only", false, "run panel without NFQUEUE/nftables (dev/testing)")
@@ -116,7 +116,7 @@ func runServe(args []string) {
 		log.Fatalf("load policy: %v", err)
 	}
 	auditPath := filepath.Join(cfg.DataDir, "audit.jsonl")
-	as, err := store.NewAuditStore(auditPath, 2000, 20*1024*1024)
+	as, err := store.NewAuditStore(auditPath, cfg.AuditRingCap, int64(cfg.AuditMaxFileMB)*1024*1024)
 	if err != nil {
 		log.Fatalf("init audit store: %v", err)
 	}
@@ -199,7 +199,7 @@ func runServe(args []string) {
 
 	errCh := make(chan error, 2)
 	go func() {
-		log.Printf("natgfw %s web panel listening on http://%s (bridge=%s table=%s)", version, cfg.ListenAddr, cfg.BridgeIface, cfg.NftTable)
+		log.Printf("snapgfw %s web panel listening on http://%s (bridge=%s table=%s)", version, cfg.ListenAddr, cfg.BridgeIface, cfg.NftTable)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("web server: %w", err)
 		}
@@ -208,7 +208,7 @@ func runServe(args []string) {
 	if !*noEngine {
 		src := engine.NewNFQueueSource(cfg.QueueBase, cfg.NFQueueLen, cfg.SocketRcvBuf, cfg.ConnMarkAccept, cfg.ConnMarkDrop)
 		go func() {
-			log.Printf("natgfw DPI engine starting (workers=%d queues=%d-%d)", cfg.Workers, cfg.QueueBase, cfg.QueueBase+3)
+			log.Printf("snapgfw DPI engine starting (workers=%d queues=%d-%d)", cfg.Workers, cfg.QueueBase, cfg.QueueBase+3)
 			if err := eng.Run(ctx, src); err != nil && ctx.Err() == nil {
 				errCh <- fmt.Errorf("dpi engine: %w", err)
 			}
@@ -232,7 +232,7 @@ func runServe(args []string) {
 
 func runSetPassword(args []string) {
 	fs := flag.NewFlagSet("set-password", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/natgfw/config.json", "path to config.json")
+	cfgPath := fs.String("config", "/etc/snapgfw/config.json", "path to config.json")
 	_ = fs.Parse(args)
 
 	reader := bufio.NewReader(os.Stdin)
@@ -261,10 +261,10 @@ func runSetPassword(args []string) {
 
 func runApplyPreset(args []string) {
 	fs := flag.NewFlagSet("apply-preset", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/natgfw/config.json", "path to config.json")
+	cfgPath := fs.String("config", "/etc/snapgfw/config.json", "path to config.json")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
-		log.Fatalf("usage: natgfw apply-preset <anti_blacklist|strict_block|audit_only|anti_abuse>")
+		log.Fatalf("usage: snapgfw apply-preset <anti_blacklist>")
 	}
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -282,7 +282,7 @@ func runApplyPreset(args []string) {
 
 func runExportPolicy(args []string) {
 	fs := flag.NewFlagSet("export-policy", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/natgfw/config.json", "path to config.json")
+	cfgPath := fs.String("config", "/etc/snapgfw/config.json", "path to config.json")
 	_ = fs.Parse(args)
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -298,10 +298,10 @@ func runExportPolicy(args []string) {
 
 func runImportPolicy(args []string) {
 	fs := flag.NewFlagSet("import-policy", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/natgfw/config.json", "path to config.json")
+	cfgPath := fs.String("config", "/etc/snapgfw/config.json", "path to config.json")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
-		log.Fatalf("usage: natgfw import-policy <policy.json>")
+		log.Fatalf("usage: snapgfw import-policy <policy.json>")
 	}
 	raw, err := os.ReadFile(fs.Arg(0))
 	if err != nil {
@@ -327,7 +327,7 @@ func runImportPolicy(args []string) {
 
 func runValidate(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
-	cfgPath := fs.String("config", "/etc/natgfw/config.json", "path to config.json")
+	cfgPath := fs.String("config", "/etc/snapgfw/config.json", "path to config.json")
 	_ = fs.Parse(args)
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {

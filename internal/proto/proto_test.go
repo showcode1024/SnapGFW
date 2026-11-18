@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/crypto/hkdf"
 
-	"natgfw/internal/model"
+	"snapgfw/internal/model"
 )
 
 func buildClientHelloMsg(sni string, ech bool) []byte {

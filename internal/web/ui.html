@@ -1,776 +1,1327 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>natgfw 防火墙控制面板</title>
+<title>SnapGFW</title>
 <style>
-  :root {
-    --bg: #0f141b; --panel: #161d27; --panel2: #1c2532; --line: #283447;
-    --text: #e6edf3; --muted: #8b9bb0; --accent: #3b82f6; --ok: #22c55e;
-    --warn: #f59e0b; --bad: #ef4444; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
-  header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
-  .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 10px; }
-  nav { display: flex; gap: 6px; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  .tab { background: transparent; border: 1px solid transparent; color: var(--muted); padding: 7px 14px; border-radius: 6px; cursor: pointer; font-weight: 500; }
-  .tab.active { background: var(--panel2); color: var(--text); border-color: var(--line); }
-  main { max-width: 1260px; margin: 18px auto; padding: 0 16px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  h2 { margin: 0 0 12px; font-size: 16px; }
-  h3 { margin: 0 0 8px; font-size: 14px; color: var(--muted); font-weight: 600; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-  .stat { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-  .big { font-size: 22px; font-weight: 700; margin-top: 4px; }
-  .muted { color: var(--muted); font-size: 12px; }
-  .mono { font-family: var(--mono); font-size: 12px; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
-  .col { display: flex; flex-direction: column; gap: 4px; }
-  label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
-  input, select, textarea { background: var(--bg); border: 1px solid var(--line); color: var(--text); padding: 7px 10px; border-radius: 6px; font: inherit; }
-  textarea { font-family: var(--mono); font-size: 12px; }
-  .btn { border: 1px solid var(--line); background: var(--panel2); color: var(--text); padding: 7px 14px; border-radius: 6px; cursor: pointer; font-weight: 500; }
-  .btn:hover { border-color: #465a78; }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn.danger { background: rgba(239,68,68,.15); border-color: var(--bad); color: #fca5a5; }
-  .btn.warn { background: rgba(245,158,11,.15); border-color: var(--warn); color: #fcd34d; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
-  .badge.ok { background: rgba(34,197,94,.16); color: #86efac; }
-  .badge.warn { background: rgba(245,158,11,.18); color: #fde68a; }
-  .badge.bad { background: rgba(239,68,68,.18); color: #fca5a5; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-size: 12px; color: var(--muted); font-weight: 600; }
-  .table-wrap { overflow-x: auto; }
-  .proto-item { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--panel2); }
-  .proto-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .proto-adv { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: none; }
-  .proto-adv.open { display: block; }
-  .preset-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel2); display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
-  .preset-card.active { border-color: var(--accent); }
-  #login-box { max-width: 360px; margin: 12vh auto; }
-  #toast { position: fixed; right: 20px; bottom: 20px; background: #1e293b; border: 1px solid var(--accent); padding: 10px 16px; border-radius: 8px; display: none; z-index: 99; }
-  .hidden { display: none !important; }
-  .switch { display: inline-flex; align-items: center; gap: 6px; flex-direction: row; cursor: pointer; color: var(--text); font-size: 13px; }
+:root{
+  --bg-canvas:#ffffff;
+  --bg-page:#fbfbfb;
+  --bg-sidebar:#f5f5f7;
+  --bg-subtle:#f3f4f6;
+  --bg-hover:#efeff2;
+  --bg-active:#e9eaee;
+  --bg-dark:#111113;
+  --border:#e6e7eb;
+  --border-strong:#d1d5db;
+  --text:#111113;
+  --text-2:#52525b;
+  --text-muted:#8e8e93;
+  --ok:#16a34a;
+  --ok-bg:#ecfdf3;
+  --warn:#d97706;
+  --warn-bg:#fffbeb;
+  --danger:#dc2626;
+  --danger-bg:#fef2f2;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Noto Sans SC","Microsoft YaHei","Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono","Geist Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;background:var(--bg-canvas);color:var(--text);font:400 13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+input,select,textarea{background:var(--bg-canvas);border:1px solid var(--border);border-radius:6px;padding:6px 10px;outline:none;transition:border-color .12s}
+input:focus,select:focus,textarea:focus{border-color:var(--text)}
+input::placeholder,textarea::placeholder{color:var(--text-muted)}
+textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.hidden{display:none!important}
+
+/* Login */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg-page);padding:24px}
+.login-card{width:340px;background:var(--bg-canvas);border:1px solid var(--border);border-radius:10px;padding:28px;box-shadow:0 6px 24px rgba(0,0,0,.04);display:flex;flex-direction:column;gap:16px}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.dot{width:7px;height:7px;border-radius:999px;background:var(--ok);flex:none}
+.dot.warn{background:var(--warn)}
+.dot.danger{background:var(--danger)}
+.dot.muted{background:var(--text-muted)}
+.field{display:flex;flex-direction:column;gap:5px}
+.field>label{font-size:12px;color:var(--text-2);font-weight:500}
+.field input,.field select,.field textarea{width:100%}
+
+/* Buttons & Controls */
+.btn{height:30px;padding:0 12px;border-radius:6px;font-size:12.5px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;border:1px solid transparent;transition:background .12s,border-color .12s,opacity .12s}
+.btn-primary{background:var(--bg-dark);color:#fff}
+.btn-primary:hover{background:#27272a}
+.btn-primary:disabled{opacity:.4;cursor:default}
+.btn-ghost{background:var(--bg-canvas);border-color:var(--border);color:var(--text)}
+.btn-ghost:hover{background:var(--bg-subtle)}
+.btn-danger-text{color:var(--danger);font-size:12px;font-weight:500;padding:4px 6px;border-radius:4px}
+.btn-danger-text:hover{background:var(--danger-bg)}
+.btn-quiet{color:var(--text-2);font-size:12px;font-weight:500;padding:4px 8px;border-radius:5px}
+.btn-quiet:hover{background:var(--bg-subtle);color:var(--text)}
+
+.switch{position:relative;width:32px;height:18px;border-radius:999px;background:var(--bg-active);flex:none;transition:background .15s}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:999px;background:#fff;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.switch[aria-checked="true"]{background:var(--bg-dark)}
+.switch[aria-checked="true"]::after{transform:translateX(14px)}
+
+.seg{display:inline-flex;padding:2px;background:var(--bg-subtle);border-radius:6px;gap:2px}
+.seg button{height:24px;padding:0 9px;border-radius:4px;font-size:12px;color:var(--text-muted);font-weight:400;transition:all .1s}
+.seg button.active{background:var(--bg-canvas);color:var(--text);font-weight:500;box-shadow:0 0 0 .5px var(--border)}
+
+/* Shell */
+.shell{display:flex;height:100vh;width:100vw;overflow:hidden}
+.sidebar{width:220px;flex:none;background:var(--bg-sidebar);border-right:1px solid var(--border);padding:16px 14px;display:flex;flex-direction:column;gap:16px}
+.sb-head{display:flex;align-items:center;justify-content:space-between;padding:4px 6px}
+.sb-iface{display:inline-flex;align-items:center;gap:6px;font:400 11.5px var(--mono);color:var(--text-2)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-item{height:32px;padding:0 10px;border-radius:6px;display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:13px;text-align:left;transition:background .1s,color .1s}
+.nav-item:hover{background:var(--bg-hover);color:var(--text)}
+.nav-item.active{background:var(--bg-active);color:var(--text);font-weight:500}
+.nav-dot{width:5px;height:5px;border-radius:999px;background:var(--text-muted)}
+.nav-item.active .nav-dot{background:var(--text)}
+.sb-spacer{flex:1}
+.sb-footer{border-top:1px solid var(--border);padding:12px 6px 0;display:flex;flex-direction:column;gap:9px}
+.sb-meta{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted)}
+.sb-bypass{display:flex;align-items:center;justify-content:space-between;padding:2px 0}
+.sb-bypass span{font-size:13px;font-weight:500}
+.sb-bypass.on span{color:var(--warn)}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-canvas)}
+.topbar{height:52px;flex:none;border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.topbar h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em}
+.topbar-actions{display:flex;align-items:center;gap:8px;position:relative}
+.view{flex:1;min-height:0;display:flex;flex-direction:column}
+
+/* Metrics Strip */
+.metrics{height:58px;flex:none;border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;gap:42px;overflow-x:auto}
+.metric{display:flex;flex-direction:column;gap:1px}
+.metric-lbl{font-size:11.5px;color:var(--text-muted)}
+.metric-val{font:500 19px/1.25 var(--mono);letter-spacing:-.02em}
+.metric-val.danger{color:var(--danger)}
+.metric-val.warn{color:var(--warn)}
+
+/* Split Layout */
+.split{flex:1;min-height:0;display:flex;position:relative}
+.pane-main{flex:1;min-width:0;display:flex;flex-direction:column;overflow-y:auto}
+.inspector{width:320px;flex:none;background:var(--bg-page);border-left:1px solid var(--border);padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.insp-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.insp-title{display:flex;align-items:baseline;gap:8px;min-width:0}
+.insp-title h2{margin:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Tables & Lists */
+.toolbar{height:42px;flex:none;border-bottom:1px solid var(--border);padding:0 20px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.search-in{height:28px;width:240px;font-size:12.5px}
+.col-hdr{height:30px;flex:none;background:var(--bg-page);border-bottom:1px solid var(--border);padding:0 20px;display:flex;align-items:center;gap:12px;font-size:11.5px;color:var(--text-muted)}
+.rows{flex:1;overflow-y:auto}
+.row{min-height:40px;padding:0 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;cursor:pointer;transition:background .08s}
+.row:hover{background:var(--bg-page)}
+.row.selected{background:var(--bg-hover)}
+.row-title{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;white-space:nowrap;overflow:hidden}
+.row-name{font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.row-id{font:400 11.5px var(--mono);color:var(--text-muted)}
+.dir-btn{width:42px;height:24px;border-radius:4px;font-size:12px;color:var(--text-2);text-align:center}
+.dir-btn:hover{background:var(--bg-subtle);color:var(--text)}
+.chev{color:var(--text-muted);font-size:14px;width:12px;text-align:right}
+.row.selected .chev{color:var(--text)}
+
+/* Ports & Limits */
+.section-hdr{height:38px;border-bottom:1px solid var(--border);padding:0 20px;display:flex;align-items:center;justify-content:space-between;flex:none}
+.section-hdr h2{margin:0;font-size:13px;font-weight:600}
+.limits-box{border-bottom:1px solid var(--border);padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.autoban-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;background:var(--bg-page);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--text-2)}
+.autoban-bar input{width:64px;height:26px;padding:0 8px;font:400 12px var(--mono)}
+.ban-box{padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+.ban-form{display:flex;gap:8px;align-items:center}
+.empty-line{padding:24px 20px;color:var(--text-muted);font-size:12.5px;border-bottom:1px solid var(--border)}
+.popover{position:absolute;top:40px;right:0;z-index:20;background:var(--bg-canvas);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.08);display:flex;flex-direction:column;min-width:190px}
+.popover button{text-align:left;padding:7px 10px;border-radius:5px;font-size:12.5px}
+.popover button:hover{background:var(--bg-subtle)}
+
+/* Instances & Logs */
+.inst-pane{max-height:42%;min-height:170px;border-bottom:1px solid var(--border);display:flex;flex-direction:column}
+.logs-pane{flex:1;min-height:0;display:flex;flex-direction:column}
+.chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;background:var(--bg-subtle);border:1px solid var(--border);border-radius:5px;font:400 11.5px var(--mono)}
+.log-row{min-height:34px;padding:0 24px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:66px 38px 170px 168px 88px minmax(0,1fr);align-items:center;gap:12px;font:400 12px/1.35 var(--mono)}
+.log-row:hover{background:var(--bg-page)}
+.act-block{color:var(--danger);font-family:var(--sans);font-size:12px}
+.act-quarantine{color:var(--warn);font-family:var(--sans);font-size:12px}
+.act-log{color:var(--text-muted);font-family:var(--sans);font-size:12px}
+
+/* System Sheet */
+.sys-scroll{flex:1;overflow-y:auto;padding:24px;display:flex;justify-content:center}
+.sys-sheet{width:100%;max-width:680px;display:flex;flex-direction:column}
+.sys-row{display:flex;align-items:flex-start;gap:24px;padding:20px 0;border-bottom:1px solid var(--border)}
+.sys-lbl{width:140px;flex:none;font-weight:500;padding-top:5px}
+.sys-ctrl{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+.sys-inline{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sys-inline input{flex:1;min-width:0}
+
+/* Toast */
+.toast{position:fixed;bottom:18px;right:18px;z-index:50;background:var(--bg-dark);color:#fff;padding:8px 14px;border-radius:7px;font-size:12.5px;box-shadow:0 8px 24px rgba(0,0,0,.15);opacity:0;transform:translateY(6px);pointer-events:none;transition:opacity .15s,transform .15s}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.err{background:var(--danger)}
+
+@media(max-width:960px){
+  .sidebar{width:176px}
+  .split{flex-direction:column;overflow-y:auto}
+  .pane-main{overflow-y:visible;flex:none}
+  .inspector{width:100%;border-left:0;border-top:1px solid var(--border);overflow-y:visible}
+}
 </style>
 </head>
 <body>
-<div id="login-view" class="card" style="max-width:360px;margin:12vh auto;">
-  <h2>natgfw 防火墙登录</h2>
-  <form id="login-form" class="col" style="gap:10px;">
-    <label>用户名<input name="username" value="admin" required></label>
-    <label>密码<input name="password" type="password" required autocomplete="current-password"></label>
-    <button class="btn primary" type="submit">登录</button>
+
+<div id="login-view" class="login-wrap hidden">
+  <form id="login-form" class="login-card" autocomplete="on">
+    <div class="brand"><span class="dot"></span><span>SnapGFW</span></div>
+    <div class="field">
+      <label for="login-user">用户名</label>
+      <input id="login-user" name="username" value="admin" required>
+    </div>
+    <div class="field">
+      <label for="login-pass">密码</label>
+      <input id="login-pass" name="password" type="password" required>
+    </div>
+    <div id="login-err" class="hidden" style="color:var(--danger);font-size:12px"></div>
+    <button type="submit" class="btn btn-primary" style="width:100%;height:36px">登录</button>
   </form>
 </div>
 
-<div id="app-view" class="hidden">
-  <header>
-    <div class="brand">
-      <span>natgfw NAT 防火墙控制台</span>
-      <span id="hdr-preset" class="badge ok"></span>
-      <span id="hdr-bypass" class="badge warn hidden">紧急全旁路开启中</span>
+<div id="app-view" class="shell hidden">
+  <aside class="sidebar">
+    <div class="sb-head">
+      <span class="brand" style="font-size:16px">SnapGFW</span>
+      <span class="sb-iface"><span id="sb-status-dot" class="dot"></span><span id="sb-iface-name">rmbr0</span></span>
     </div>
-    <div class="row">
-      <button class="btn warn" id="btn-bypass">切换紧急旁路</button>
-      <button class="btn" id="btn-logout">退出</button>
+    <nav class="nav" aria-label="主导航">
+      <button type="button" class="nav-item active" data-nav="policy"><span class="nav-dot"></span>策略</button>
+      <button type="button" class="nav-item" data-nav="ports"><span class="nav-dot"></span>端口</button>
+      <button type="button" class="nav-item" data-nav="instances"><span class="nav-dot"></span>实例与日志</button>
+      <button type="button" class="nav-item" data-nav="system"><span class="nav-dot"></span>系统</button>
+    </nav>
+    <div class="sb-spacer"></div>
+    <div class="sb-footer">
+      <div class="sb-meta mono"><span id="sb-mem">内存 0 MB</span><span id="sb-qdrop">队列 0</span></div>
+      <div class="sb-meta"><span>GeoIP / Site</span><span id="sb-geo" style="color:var(--ok)">就绪</span></div>
+      <div id="sb-bypass-row" class="sb-bypass">
+        <span>全局旁路</span>
+        <button type="button" id="btn-bypass" class="switch" role="switch" aria-checked="false" aria-label="全局旁路"></button>
+      </div>
+      <button type="button" id="btn-logout" style="text-align:left;font-size:12px;color:var(--text-muted);padding:2px 0">退出登录</button>
     </div>
-  </header>
-  <nav id="tabs">
-    <button class="tab active" data-tab="overview">概览与策略模板</button>
-    <button class="tab" data-tab="protocols">协议策略矩阵</button>
-    <button class="tab" data-tab="ports">端口与访问控制</button>
-    <button class="tab" data-tab="abuse">防滥用与熔断</button>
-    <button class="tab" data-tab="instances">实例与实时日志</button>
-    <button class="tab" data-tab="system">导入导出与系统</button>
-  </nav>
-  <main>
-    <section id="tab-overview"></section>
-    <section id="tab-protocols" class="hidden"></section>
-    <section id="tab-ports" class="hidden"></section>
-    <section id="tab-abuse" class="hidden"></section>
-    <section id="tab-instances" class="hidden"></section>
-    <section id="tab-system" class="hidden"></section>
+  </aside>
+
+  <main class="main">
+    <!-- 01 · 策略 -->
+    <section id="view-policy" class="view">
+      <header class="topbar">
+        <h1>策略</h1>
+        <div class="topbar-actions">
+          <button type="button" id="btn-clear-policy" class="btn btn-quiet">清空规则</button>
+          <button type="button" id="btn-import-anti-bl" class="btn btn-ghost">导入推荐 · 防招黑</button>
+          <button type="button" id="btn-save-policy" class="btn btn-primary" disabled>已同步</button>
+        </div>
+      </header>
+      <div class="metrics">
+        <div class="metric"><span class="metric-lbl">总数据包</span><span id="m-pkts" class="metric-val">0</span></div>
+        <div class="metric"><span class="metric-lbl">已拦截</span><span id="m-blocks" class="metric-val">0</span></div>
+        <div class="metric"><span class="metric-lbl">受管实例</span><span id="m-insts" class="metric-val">0</span></div>
+        <div class="metric"><span class="metric-lbl">当前隔离</span><span id="m-bans" class="metric-val">0</span></div>
+        <div class="metric"><span class="metric-lbl">DPI 线程</span><span id="m-wkrs" class="metric-val" style="color:var(--text-2)">0</span></div>
+      </div>
+      <div class="split">
+        <div class="pane-main">
+          <div class="toolbar">
+            <input id="proto-search" class="search-in" placeholder="筛选协议名称或 ID..." aria-label="筛选协议">
+            <span id="proto-enabled-count" style="font-size:12px;color:var(--text-2)">已启用 0 / 15</span>
+          </div>
+          <div class="col-hdr">
+            <span style="width:36px">启用</span>
+            <span style="flex:1">协议</span>
+            <span style="width:132px">策略</span>
+            <span style="width:42px;text-align:center">方向</span>
+            <span style="width:12px"></span>
+          </div>
+          <div id="proto-rows" class="rows"></div>
+        </div>
+        <aside id="proto-inspector" class="inspector" aria-label="协议详情"></aside>
+      </div>
+    </section>
+
+    <!-- 02 · 端口 -->
+    <section id="view-ports" class="view hidden">
+      <header class="topbar">
+        <h1>端口与流控</h1>
+        <div class="topbar-actions">
+          <button type="button" id="btn-port-tpl" class="btn btn-ghost">+ 常用高危端口</button>
+          <div id="port-tpl-menu" class="popover hidden">
+            <button type="button" data-tpl="smtp">SMTP 发信 (25 / 465 / 587)</button>
+            <button type="button" data-tpl="bt">BitTorrent 端口段 (6881-6889)</button>
+            <button type="button" data-tpl="telnet">明文高危端口 (21 / 23 / 445)</button>
+          </div>
+          <button type="button" id="btn-new-port" class="btn btn-ghost">+ 新建规则</button>
+          <button type="button" id="btn-save-ports" class="btn btn-primary" disabled>已同步</button>
+        </div>
+      </header>
+      <div class="split">
+        <div class="pane-main">
+          <div class="section-hdr">
+            <h2>L4 端口规则</h2>
+            <span id="port-count" style="font-size:12px;color:var(--text-muted)">0 条规则</span>
+          </div>
+          <div class="col-hdr">
+            <span style="width:36px">启用</span>
+            <span style="width:44px">优先级</span>
+            <span style="flex:1">规则</span>
+            <span style="width:96px">方向 · 作用域</span>
+            <span style="width:106px">协议 / 端口</span>
+            <span style="width:92px">对端</span>
+            <span style="width:52px">动作</span>
+          </div>
+          <div id="port-rows"></div>
+
+          <div class="limits-box">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <strong style="font-size:13px">连接与速率上限</strong>
+              <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer">
+                <span>拦截时清理 Conntrack</span>
+                <button type="button" id="ab-flush" class="switch" role="switch" aria-checked="true"></button>
+              </label>
+            </div>
+            <div class="grid-3">
+              <div class="field"><label for="ab-conns">单租户最大并发 (0不限)</label><input id="ab-conns" type="number" min="0" class="mono"></div>
+              <div class="field"><label for="ab-rate">新建速率 / 秒 (0不限)</label><input id="ab-rate" type="number" min="0" class="mono"></div>
+              <div class="field"><label for="ab-pps">UDP PPS 上限 (0不限)</label><input id="ab-pps" type="number" min="0" class="mono"></div>
+            </div>
+            <div class="autoban-bar">
+              <button type="button" id="ab-autoban" class="switch" role="switch" aria-checked="false" aria-label="超限自动隔离"></button>
+              <span style="font-weight:500;color:var(--text)">超限自动隔离</span>
+              <span>阈值</span><input id="ab-thresh" type="number" min="1">
+              <span>次 /</span><input id="ab-win" type="number" min="10">
+              <span>秒 → 封禁</span><input id="ab-dur" type="number" min="30"><span>秒</span>
+            </div>
+          </div>
+
+          <div class="ban-box">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <strong style="font-size:13px">当前隔离</strong>
+              <span id="ban-count" style="font-size:12px;color:var(--text-muted)">0 个租户</span>
+            </div>
+            <div class="ban-form">
+              <input id="ban-ip" class="mono" style="width:180px" placeholder="租户 IP (10.10.0.x)">
+              <input id="ban-reason" style="flex:1" placeholder="封禁原因">
+              <input id="ban-dur" class="mono" type="number" min="10" value="1800" style="width:90px">
+              <button type="button" id="btn-ban-add" class="btn btn-primary">隔离</button>
+            </div>
+            <div id="ban-rows"></div>
+          </div>
+        </div>
+        <aside id="port-inspector" class="inspector" aria-label="端口规则编辑"></aside>
+      </div>
+    </section>
+
+    <!-- 03 · 实例与日志 -->
+    <section id="view-instances" class="view hidden">
+      <header class="topbar">
+        <h1>实例与日志</h1>
+        <div class="topbar-actions">
+          <span class="sb-iface" style="margin-right:6px"><span id="sse-dot" class="dot muted"></span><span id="sse-txt">连接中</span></span>
+          <button type="button" id="btn-log-pause" class="btn btn-ghost">暂停流</button>
+          <button type="button" id="btn-log-clear" class="btn btn-ghost">清空显示</button>
+        </div>
+      </header>
+      <div class="inst-pane">
+        <div class="col-hdr" style="padding:0 24px">
+          <span style="width:170px">实例</span>
+          <span style="width:120px">内网 IP</span>
+          <span style="width:104px">规格</span>
+          <span style="flex:1">端口转发</span>
+          <span style="width:68px;text-align:right">拦截数</span>
+          <span style="width:80px">状态</span>
+          <span style="width:52px;text-align:right">操作</span>
+        </div>
+        <div id="inst-rows" class="rows"></div>
+      </div>
+      <div class="logs-pane">
+        <div class="toolbar" style="padding:0 24px">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <input id="log-search" class="search-in" placeholder="筛选端口、目标 IP 或详情...">
+            <button type="button" id="log-tenant-chip" class="chip hidden"></button>
+            <div id="log-action-seg" class="seg">
+              <button type="button" class="active" data-act="">全部</button>
+              <button type="button" data-act="block">拦截</button>
+              <button type="button" data-act="log">记录</button>
+            </div>
+            <select id="log-proto" style="height:28px;padding:0 8px;font-size:12px">
+              <option value="">全部协议</option>
+            </select>
+          </div>
+          <span id="log-cap-hint" class="mono" style="font-size:11.5px;color:var(--text-muted)">内存≤200条 · 磁盘≤4MB</span>
+        </div>
+        <div id="log-rows" class="rows"></div>
+      </div>
+    </section>
+
+    <!-- 04 · 系统 -->
+    <section id="view-system" class="view hidden">
+      <header class="topbar"><h1>系统</h1></header>
+      <div class="sys-scroll">
+        <div class="sys-sheet">
+          <div class="sys-row">
+            <div class="sys-lbl">受信任租户</div>
+            <div class="sys-ctrl">
+              <div class="sys-inline">
+                <input id="sys-trusted" class="mono" placeholder="例: 10.10.0.1, 10.10.0.0/24">
+                <button type="button" id="btn-save-trusted" class="btn btn-ghost">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="sys-row">
+            <div class="sys-lbl">Geo 规则库</div>
+            <div class="sys-ctrl">
+              <div class="sys-inline">
+                <div style="display:flex;align-items:center;gap:18px;font:400 12px var(--mono);color:var(--text-2)">
+                  <span style="display:inline-flex;align-items:center;gap:6px"><span id="dot-geosite" class="dot"></span><span id="txt-geosite">GeoSite</span></span>
+                  <span style="display:inline-flex;align-items:center;gap:6px"><span id="dot-geoip" class="dot"></span><span id="txt-geoip">GeoIP</span></span>
+                </div>
+                <button type="button" id="btn-geo-dl" class="btn btn-ghost">立即更新</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="sys-row">
+            <div class="sys-lbl">策略备份</div>
+            <div class="sys-ctrl">
+              <div style="display:flex;gap:10px">
+                <a href="/api/policy/export" class="btn btn-ghost" style="text-decoration:none">导出 JSON</a>
+                <label class="btn btn-ghost" style="cursor:pointer">导入 JSON<input id="sys-import-file" type="file" accept=".json" class="hidden"></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="sys-row">
+            <div class="sys-lbl">告警通知</div>
+            <div class="sys-ctrl">
+              <input id="sys-webhook" class="mono" placeholder="Webhook URL (https://...)">
+              <div style="display:flex;gap:8px">
+                <input id="sys-tg-token" class="mono" style="flex:2" placeholder="Telegram Bot Token">
+                <input id="sys-tg-chat" class="mono" style="flex:1" placeholder="Chat ID">
+                <input id="sys-notify-cd" class="mono" type="number" min="15" style="width:92px" placeholder="60s">
+              </div>
+              <div class="sys-inline" style="padding-top:4px">
+                <div style="display:flex;align-items:center;gap:18px;font-size:12px;color:var(--text-2)">
+                  <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                    <button type="button" id="sys-alert-blk" class="switch" role="switch" aria-checked="false"></button>拦截时告警
+                  </label>
+                  <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                    <button type="button" id="sys-alert-ban" class="switch" role="switch" aria-checked="false"></button>隔离时告警
+                  </label>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button type="button" id="btn-notify-test" class="btn btn-ghost">发送测试</button>
+                  <button type="button" id="btn-save-notify" class="btn btn-primary">保存通知</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sys-row" style="border-bottom:0">
+            <div class="sys-lbl">管理员密码</div>
+            <div class="sys-ctrl">
+              <div class="sys-inline">
+                <input id="sys-pwd" type="password" placeholder="新密码 (至少 6 位)">
+                <button type="button" id="btn-save-pwd" class="btn btn-ghost">更新密码</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 
-<div id="toast"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
-const $ = s => document.querySelector(s);
-let state = { overview: null, policy: null, presets: [], instances: null, sse: null };
+(() => {
+  'use strict';
 
-function esc(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-function toast(msg) {
-  const el = $('#toast');
-  el.textContent = msg;
-  el.style.display = 'block';
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.style.display = 'none', 2800);
-}
-async function api(url, opts = {}) {
-  const headers = Object.assign({}, opts.headers || {});
-  if (opts.method && opts.method !== 'GET') headers['X-Natgfw'] = '1';
-  if (opts.body && typeof opts.body !== 'string') {
-    headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(opts.body);
-  }
-  const res = await fetch(url, { ...opts, headers });
-  if (res.status === 401) {
-    showLogin();
-    throw new Error('登录已过期');
-  }
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!res.ok) throw new Error((data && data.error) || text || ('HTTP ' + res.status));
-  return data;
-}
-
-function showLogin() {
-  if (state.sse) { state.sse.close(); state.sse = null; }
-  $('#login-view').classList.remove('hidden');
-  $('#app-view').classList.add('hidden');
-}
-function showApp() {
-  $('#login-view').classList.add('hidden');
-  $('#app-view').classList.remove('hidden');
-}
-
-$('#login-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  try {
-    await api('/api/login', { method: 'POST', body: { username: fd.get('username'), password: fd.get('password') } });
-    showApp();
-    await loadAll();
-  } catch (err) { toast('登录失败：' + err.message); }
-});
-$('#btn-logout').addEventListener('click', async () => {
-  await api('/api/logout', { method: 'POST' }).catch(() => {});
-  showLogin();
-});
-$('#btn-bypass').addEventListener('click', async () => {
-  if (!state.policy) return;
-  const next = !state.policy.global_bypass;
-  if (next && !confirm('开启紧急旁路将暂停所有 DPI 与端口拦截，确认吗？')) return;
-  try {
-    state.policy = await api('/api/bypass', { method: 'POST', body: { global_bypass: next } });
-    toast(next ? '已开启紧急旁路' : '已恢复防火墙拦截');
-    await loadAll();
-  } catch (err) { toast(err.message); }
-});
-
-document.querySelectorAll('#tabs .tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#tabs .tab').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    const name = btn.dataset.tab;
-    document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
-    $('#tab-' + name).classList.remove('hidden');
-    if (name === 'instances') startSSE();
-  });
-});
-
-async function loadAll() {
-  const [ov, pol, presets] = await Promise.all([
-    api('/api/overview'),
-    api('/api/policy'),
-    api('/api/presets'),
-  ]);
-  state.overview = ov;
-  state.policy = pol;
-  state.presets = presets;
-
-  $('#hdr-preset').textContent = '当前模板: ' + (pol.active_preset || '自定义');
-  $('#hdr-bypass').classList.toggle('hidden', !pol.global_bypass);
-
-  renderOverview();
-  renderProtocols();
-  renderPorts();
-  renderAbuse();
-  await loadInstancesAndLogs();
-  renderSystem();
-}
-
-function renderOverview() {
-  const o = state.overview;
-  const e = o.engine || {};
-  const protoTags = Object.entries(o.by_protocol || {}).map(([k, v]) => `<span class="badge warn" style="margin:2px;">${esc(k)}: ${v}</span>`).join('') || '<span class="muted">暂无命中记录</span>';
-  $('#tab-overview').innerHTML = `
-    <div class="grid">
-      <div class="stat"><h3>内核放行直通流</h3><div class="big" style="color:var(--ok)">${e.offloaded_accept ?? 0}</div><div class="muted">已打 ct mark 旁路</div></div>
-      <div class="stat"><h3>累计拦截 / 告警</h3><div class="big" style="color:var(--bad)">${o.audit_blocks} <span class="muted">/ ${o.audit_logs}</span></div><div class="muted">DPI 阻断 / 审计事件</div></div>
-      <div class="stat"><h3>待审流 / 队列丢包</h3><div class="big">${e.pending_streams ?? 0} <span class="muted">/ ${e.queue_dropped ?? 0}</span></div><div class="muted">Worker 数: ${e.worker_count ?? 0}</div></div>
-      <div class="stat"><h3>当前隔离实例</h3><div class="big">${o.quarantine_count}</div><div class="muted">托管实例数: ${o.instance_count} (${o.runman_available ? '已联动 runman' : '独立模式'})</div></div>
-      <div class="stat"><h3>内存与规则库</h3><div class="big">${o.heap_alloc_mb.toFixed(1)} MB</div><div class="muted">GeoSite: ${o.geosite_present ? '已加载' : (o.geo_fallback ? '内置核心CN库' : '缺失')} · GeoIP: ${o.geoip_present ? '已加载' : '未加载'}</div></div>
-    </div>
-    <div class="card" style="margin-top:16px;">
-      <h2>一键导入策略模板（导入后仍可随时单独修改任意协议或端口）</h2>
-      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
-        ${state.presets.map(p => `
-          <div class="preset-card ${state.policy.active_preset === p.id ? 'active' : ''}">
-            <div>
-              <div style="font-weight:700;margin-bottom:6px;">${esc(p.name)} ${p.recommended ? '<span class="badge ok">推荐</span>' : ''}</div>
-              <div class="muted">${esc(p.summary)}</div>
-            </div>
-            <button class="btn ${state.policy.active_preset === p.id ? 'primary' : ''}" onclick="applyPreset('${esc(p.id)}')">${state.policy.active_preset === p.id ? '重新应用此模板' : '一键导入'}</button>
-          </div>`).join('')}
-      </div>
-    </div>
-    <div class="card"><h2>协议命中统计</h2><div>${protoTags}</div></div>
-  `;
-}
-
-window.applyPreset = async id => {
-  if (!confirm('将按所选模板重置协议、端口与防滥用配置（保留通知和白名单设置），确认？')) return;
-  try {
-    state.policy = await api('/api/presets/' + encodeURIComponent(id) + '/apply', { method: 'POST' });
-    toast('已导入模板：' + id);
-    await loadAll();
-  } catch (err) { toast('失败：' + err.message); }
-};
-
-function renderProtocols() {
-  const protos = state.policy.protocols || [];
-  $('#tab-protocols').innerHTML = `
-    <div class="card">
-      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div>
-          <h2 style="margin:0;">全协议策略矩阵（独立开关 · 自由配置）</h2>
-          <div class="muted">每项协议均可独立控制启停、动作、方向和例外；修改后点击右上角「保存并热生效」。</div>
-        </div>
-        <button class="btn primary" onclick="saveProtocols()">保存并热生效</button>
-      </div>
-      ${protos.map((p, idx) => `
-        <div class="proto-item" data-idx="${idx}">
-          <div class="proto-head">
-            <div style="flex:1;min-width:260px;">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label class="switch"><input type="checkbox" class="p-en" ${p.enabled ? 'checked' : ''}><strong>${esc(p.name)}</strong></label>
-                <span class="badge ok">${esc(p.category)}</span>
-                <span class="mono muted">${esc(p.id)}</span>
-              </div>
-              <div class="muted" style="margin-top:4px;">${esc(p.description)}</div>
-              ${p.warning ? `<div class="muted" style="color:var(--warn);margin-top:4px;">⚠ ${esc(p.warning)}</div>` : ''}
-            </div>
-            <div class="row">
-              <label>动作
-                <select class="p-act">
-                  <option value="block" ${p.action==='block'?'selected':''}>拦截</option>
-                  <option value="log" ${p.action==='log'?'selected':''}>仅记录告警</option>
-                  <option value="allow" ${p.action==='allow'?'selected':''}>显式放行</option>
-                </select>
-              </label>
-              <label>方向
-                <select class="p-dir">
-                  <option value="in" ${p.direction==='in'?'selected':''}>仅入站(外部→实例)</option>
-                  <option value="out" ${p.direction==='out'?'selected':''}>仅出站(实例→外部)</option>
-                  <option value="both" ${p.direction==='both'?'selected':''}>双向</option>
-                </select>
-              </label>
-              ${p.id === 'websocket' ? `
-              <label>WS 模式
-                <select class="p-wsmode">
-                  <option value="two_stage_high" ${p.ws_mode==='two_stage_high'?'selected':''}>两阶段高熵拦截</option>
-                  <option value="block_all" ${p.ws_mode==='block_all'?'selected':''}>拦截全部明文WS</option>
-                  <option value="log_only" ${p.ws_mode==='log_only'?'selected':''}>仅告警</option>
-                </select>
-              </label>` : ''}
-              <button class="btn" type="button" onclick="this.closest('.proto-item').querySelector('.proto-adv').classList.toggle('open')">高级参数</button>
-            </div>
-          </div>
-          <div class="proto-adv">
-            <div class="row">
-              <label>GeoSite 分类 (逗号分隔, 如 cn)
-                <input class="p-geosite" value="${esc((p.geosite_cats||[]).join(','))}" placeholder="cn">
-              </label>
-              <label>额外匹配域名 (逗号分隔)
-                <input class="p-mdom" style="width:240px;" value="${esc((p.match_domains||[]).join(','))}" placeholder="example.com,full:a.org">
-              </label>
-              <label>排除白名单域名 (逗号分隔)
-                <input class="p-edom" style="width:240px;" value="${esc((p.exclude_domains||[]).join(','))}" placeholder="myallowed.cn">
-              </label>
-              <label>豁免端口 (逗号分隔)
-                <input class="p-eports" style="width:150px;" value="${esc((p.except_ports||[]).join(','))}" placeholder="22,443">
-              </label>
-              <label>豁免租户 IP/CIDR
-                <input class="p-eten" style="width:200px;" value="${esc((p.except_tenants||[]).join(','))}" placeholder="10.91.0.2">
-              </label>
-            </div>
-            ${p.id === 'tls_anomaly' ? `
-              <div class="row" style="margin-top:8px;">
-                <label class="switch"><input type="checkbox" class="o-fake" ${p.options?.block_fake_obfs?'checked':''}>拦截 Fake TLS/HTTP Obfs</label>
-                <label class="switch"><input type="checkbox" class="o-ech" ${p.options?.block_ech?'checked':''}>拦截 ECH/ESNI</label>
-                <label class="switch"><input type="checkbox" class="o-nosni" ${p.options?.block_no_sni?'checked':''}>拦截无 SNI 的纯 IP TLS</label>
-              </div>` : ''}
-            ${p.id === 'fet_udp' ? `
-              <div class="row" style="margin-top:8px;">
-                <label>最小检测 UDP 包长 (字节)<input type="number" class="o-minudp" value="${p.options?.min_udp_len || 48}"></label>
-              </div>` : ''}
-            ${p.id === 'dns' ? `
-              <div class="row" style="margin-top:8px;">
-                <label>超大 DNS 隧道阈值 (字节)<input type="number" class="o-maxdns" value="${p.options?.max_dns_payload || 512}"></label>
-              </div>` : ''}
-            ${p.id === 'ssh' ? `
-              <div class="row" style="margin-top:8px;">
-                <label class="switch"><input type="checkbox" class="o-ssh22" ${p.options?.allow_std_ssh_port?'checked':''}>放行标准 22 端口</label>
-              </div>` : ''}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
-const splitCSV = s => s.split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
-
-window.saveProtocols = async () => {
-  const next = structuredClone(state.policy);
-  next.active_preset = 'custom';
-  document.querySelectorAll('.proto-item').forEach(el => {
-    const p = next.protocols[+el.dataset.idx];
-    p.enabled = el.querySelector('.p-en').checked;
-    p.action = el.querySelector('.p-act').value;
-    p.direction = el.querySelector('.p-dir').value;
-    const ws = el.querySelector('.p-wsmode');
-    if (ws) p.ws_mode = ws.value;
-    p.geosite_cats = splitCSV(el.querySelector('.p-geosite').value);
-    p.match_domains = splitCSV(el.querySelector('.p-mdom').value);
-    p.exclude_domains = splitCSV(el.querySelector('.p-edom').value);
-    p.except_ports = splitCSV(el.querySelector('.p-eports').value).map(Number).filter(n => n > 0 && n <= 65535);
-    p.except_tenants = splitCSV(el.querySelector('.p-eten').value);
-    p.options = p.options || {};
-    if (p.id === 'tls_anomaly') {
-      p.options.block_fake_obfs = el.querySelector('.o-fake').checked;
-      p.options.block_ech = el.querySelector('.o-ech').checked;
-      p.options.block_no_sni = el.querySelector('.o-nosni').checked;
-    }
-    if (p.id === 'fet_udp') p.options.min_udp_len = +el.querySelector('.o-minudp').value || 48;
-    if (p.id === 'dns') p.options.max_dns_payload = +el.querySelector('.o-maxdns').value || 512;
-    if (p.id === 'ssh') p.options.allow_std_ssh_port = el.querySelector('.o-ssh22').checked;
-  });
-  try {
-    state.policy = await api('/api/policy', { method: 'PUT', body: next });
-    toast('协议策略已保存并立即生效');
-    await loadAll();
-  } catch (err) { toast('保存失败：' + err.message); }
-};
-
-function renderPorts() {
-  const rules = state.policy.port_rules || [];
-  $('#tab-ports').innerHTML = `
-    <div class="card">
-      <h2>L3 / L4 端口与访问控制（由 nftables 内核直接执行）</h2>
-      <div class="row" style="margin-bottom:12px;">
-        <button class="btn" onclick="quickPortPreset('smtp')">+ 一键禁出站 SMTP (25/465/587)</button>
-        <button class="btn" onclick="quickPortPreset('smb')">+ 一键禁出站 SMB/RPC (135,137-139,445)</button>
-        <button class="btn" onclick="quickPortPreset('rdp')">+ 一键禁入站 RDP 3389</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <tr><th>优先级</th><th>名称</th><th>范围(租户IP)</th><th>方向/作用域</th><th>L4/端口</th><th>对端过滤</th><th>动作</th><th>状态</th><th>操作</th></tr>
-          ${rules.map((r, i) => `
-            <tr>
-              <td>${r.priority}</td>
-              <td>${esc(r.name)}</td>
-              <td class="mono">${esc(r.tenant_ip || '全局全部实例')}</td>
-              <td>${r.direction==='in'?'入站':r.direction==='out'?'出站':'双向'} · ${esc(r.scope||'dst')}</td>
-              <td class="mono">${esc(r.l4_proto)} ${r.port_start ? r.port_start + (r.port_end && r.port_end !== r.port_start ? '-' + r.port_end : '') : '全部'}</td>
-              <td class="mono">${r.peer_type==='geoip'?'GeoIP:'+esc((r.geoip_codes||[]).join(',')):r.peer_type==='cidr'?esc(r.peer_cidr):'任意'}</td>
-              <td><span class="badge ${r.action==='block'?'bad':'ok'}">${r.action==='block'?'拦截':'放行'}</span></td>
-              <td><button class="btn" onclick="togglePortRule(${i})">${r.enabled?'已启用':'已停用'}</button></td>
-              <td><button class="btn danger" onclick="delPortRule(${i})">删除</button></td>
-            </tr>`).join('') || '<tr><td colspan="9" class="muted">暂无端口规则</td></tr>'}
-        </table>
-      </div>
-    </div>
-    <div class="card">
-      <h2>新增端口规则</h2>
-      <form id="port-form" class="row">
-        <label>规则名称<input name="name" placeholder="例如：禁出站 8080" required></label>
-        <label>优先级<input name="priority" type="number" value="100" style="width:85px"></label>
-        <label>方向<select name="direction"><option value="out">出站(实例→外部)</option><option value="in">入站(外部→实例)</option><option value="both">双向</option></select></label>
-        <label>端口作用域<select name="scope"><option value="dst">目标端口(dst)</option><option value="host_mapped">宿主机映射端口(DNAT前)</option><option value="src">源端口(src)</option></select></label>
-        <label>L4 协议<select name="l4_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option><option value="icmp">ICMP</option><option value="all">全部</option></select></label>
-        <label>起始端口<input name="port_start" type="number" value="0" min="0" max="65535" style="width:95px"></label>
-        <label>结束端口<input name="port_end" type="number" value="0" min="0" max="65535" style="width:95px"></label>
-        <label>指定租户 IP(可空)<input name="tenant_ip" placeholder="留空=全局" style="width:140px"></label>
-        <label>对端类型<select name="peer_type"><option value="any">任意地址</option><option value="cidr">CIDR 网段</option><option value="geoip">GeoIP 国家</option></select></label>
-        <label>CIDR / 国家码<input name="peer_val" placeholder="1.2.3.0/24 或 CN,RU" style="width:155px"></label>
-        <label>动作<select name="action"><option value="block">拦截</option><option value="allow">放行</option></select></label>
-        <button class="btn primary" type="submit">添加并生效</button>
-      </form>
-      <div class="muted" style="margin-top:8px;">提示：优先级数字越大越先匹配（例如给指定实例 10.91.0.2 配优先级 200 放行 25 端口，全局优先级 100 拦截 25 端口）。端口填 0 代表全部端口。</div>
-    </div>
-  `;
-  $('#port-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    const pt = f.get('peer_type'), pv = String(f.get('peer_val') || '').trim();
-    const rule = {
-      id: 'rule-' + Date.now(),
-      name: String(f.get('name')),
-      enabled: true,
-      priority: +f.get('priority'),
-      direction: f.get('direction'),
-      scope: f.get('scope'),
-      l4_proto: f.get('l4_proto'),
-      port_start: +f.get('port_start') || 0,
-      port_end: +f.get('port_end') || 0,
-      tenant_ip: String(f.get('tenant_ip') || '').trim(),
-      peer_type: pt,
-      action: f.get('action'),
-    };
-    if (pt === 'cidr') rule.peer_cidr = pv;
-    if (pt === 'geoip') rule.geoip_codes = splitCSV(pv).map(x => x.toUpperCase());
-    const next = structuredClone(state.policy);
-    next.port_rules.push(rule);
-    try {
-      state.policy = await api('/api/policy', { method: 'PUT', body: next });
-      toast('端口规则已下发');
-      await loadAll();
-    } catch (err) { toast('失败：' + err.message); }
-  });
-}
-
-window.togglePortRule = async idx => {
-  const next = structuredClone(state.policy);
-  next.port_rules[idx].enabled = !next.port_rules[idx].enabled;
-  try {
-    state.policy = await api('/api/policy', { method: 'PUT', body: next });
-    await loadAll();
-  } catch (err) { toast(err.message); }
-};
-window.delPortRule = async idx => {
-  if (!confirm('确认删除这条端口规则？')) return;
-  const next = structuredClone(state.policy);
-  next.port_rules.splice(idx, 1);
-  try {
-    state.policy = await api('/api/policy', { method: 'PUT', body: next });
-    toast('已删除并重载 nftables');
-    await loadAll();
-  } catch (err) { toast(err.message); }
-};
-window.quickPortPreset = async kind => {
-  const next = structuredClone(state.policy);
-  const add = (id, name, dir, l4, ps, pe) => {
-    if (!next.port_rules.some(r => r.id === id)) {
-      next.port_rules.push({ id, name, enabled: true, priority: 100, direction: dir, scope: 'dst', l4_proto: l4, port_start: ps, port_end: pe, peer_type: 'any', action: 'block' });
-    }
+  const PROTO_META = {
+    fet_tcp:     { label: 'Shadowsocks 2022 / FET', fields: [] },
+    fet_udp:     { label: 'UDP 乱序代理', fields: ['min_udp'] },
+    socks:       { label: 'SOCKS4 / SOCKS5', fields: [] },
+    http_proxy:  { label: 'HTTP 代理', fields: [] },
+    websocket:   { label: 'WebSocket 隧道', fields: ['ws_mode'] },
+    tls_sni:     { label: 'TLS SNI 域名', fields: ['domains'] },
+    quic_sni:    { label: 'QUIC SNI', fields: ['domains'] },
+    tls_anomaly: { label: 'TLS 异常指纹', fields: ['tls_anomaly'] },
+    openvpn:     { label: 'OpenVPN', fields: [] },
+    wireguard:   { label: 'WireGuard', fields: [] },
+    trojan:      { label: 'Trojan 特征', fields: [] },
+    ssh:         { label: 'SSH', fields: ['allow_std_ssh'] },
+    http_plain:  { label: '明文 HTTP', fields: ['domains'] },
+    dns:         { label: 'DNS 载荷检测', fields: ['domains', 'max_dns'] },
+    bittorrent:  { label: 'BitTorrent / DHT', fields: [] },
   };
-  if (kind === 'smtp') {
-    add('q-smtp-25', '禁出站 SMTP 25', 'out', 'tcp', 25, 25);
-    add('q-smtp-465', '禁出站 SMTPS 465', 'out', 'tcp', 465, 465);
-    add('q-smtp-587', '禁出站 Submission 587', 'out', 'tcp', 587, 587);
-  } else if (kind === 'smb') {
-    add('q-rpc-135', '禁出站 RPC 135', 'out', 'both', 135, 135);
-    add('q-nb-137', '禁出站 NetBIOS 137-139', 'out', 'both', 137, 139);
-    add('q-smb-445', '禁出站 SMB 445', 'out', 'tcp', 445, 445);
-  } else if (kind === 'rdp') {
-    add('q-rdp-3389', '禁入站 RDP 3389', 'in', 'both', 3389, 3389);
+  const DIR_LABEL = { both: '双向', out: '出站', in: '入站' };
+  const DIR_CYCLE = ['both', 'out', 'in'];
+  const SCOPE_LABEL = { dst: '目标', host_mapped: '宿主机', src: '源端口' };
+  const ACT_LABEL = { block: '拦截', log: '记录', allow: '放行', quarantine: '隔离' };
+
+  const state = {
+    nav: 'policy',
+    policy: null,
+    overview: null,
+    instances: [],
+    bans: [],
+    logs: [],
+    dirtyPolicy: false,
+    dirtyPorts: false,
+    selectedProto: 'fet_tcp',
+    selectedPortIdx: -1,
+    draftPort: null,
+    logFilter: { tenant: '', action: '', proto: '', q: '' },
+    logPaused: false,
+    sse: null,
+    pollTimer: null,
+  };
+
+  const $ = (s) => document.querySelector(s);
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  let toastTid = null;
+  function toast(msg, err) {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.className = 'toast show' + (err ? ' err' : '');
+    clearTimeout(toastTid);
+    toastTid = setTimeout(() => el.classList.remove('show'), 2600);
   }
-  try {
-    state.policy = await api('/api/policy', { method: 'PUT', body: next });
-    toast('已添加并应用规则');
-    await loadAll();
-  } catch (err) { toast(err.message); }
-};
 
-function renderAbuse() {
-  const a = state.policy.abuse || {};
-  $('#tab-abuse').innerHTML = `
-    <div class="card">
-      <h2>单实例防滥用限速与自动熔断隔离</h2>
-      <form id="abuse-form" class="col" style="gap:12px;">
-        <div class="row">
-          <label>单实例最大并发连接数 (0=不限)<input name="max_conns" type="number" value="${a.max_conns_per_tenant||0}"></label>
-          <label>单实例每秒新建连接上限 (0=不限)<input name="conn_rate" type="number" value="${a.new_conn_rate_per_sec||0}"></label>
-          <label>单实例 UDP 每秒包数上限 PPS (0=不限)<input name="udp_pps" type="number" value="${a.udp_pps_limit_per_tenant||0}"></label>
-        </div>
-        <div class="row">
-          <label class="switch"><input type="checkbox" name="auto_q" ${a.auto_quarantine_enabled?'checked':''}>开启违规多次自动临时断网隔离</label>
-          <label class="switch"><input type="checkbox" name="flush_ct" ${a.flush_conntrack_on_block?'checked':''}>封禁/隔离时同步清理存量连接 (conntrack -D)</label>
-        </div>
-        <div class="row">
-          <label>触发阈值 (次)<input name="q_thresh" type="number" value="${a.quarantine_threshold||10}"></label>
-          <label>统计窗口 (秒)<input name="q_win" type="number" value="${a.quarantine_window_sec||300}"></label>
-          <label>隔离时长 (秒)<input name="q_dur" type="number" value="${a.quarantine_duration_sec||600}"></label>
-          <button class="btn primary" type="submit">保存防滥用配置</button>
-        </div>
-      </form>
-    </div>
-    <div class="card">
-      <h2>当前隔离黑名单</h2>
-      <form id="ban-form" class="row" style="margin-bottom:12px;">
-        <label>租户 IP<input name="tenant_ip" placeholder="10.91.0.2" required></label>
-        <label>隔离时长(秒)<input name="duration_sec" type="number" value="600" style="width:110px"></label>
-        <label>原因<input name="reason" placeholder="手动隔离"></label>
-        <button class="btn danger" type="submit">立即隔离该 IP</button>
-      </form>
-      <div id="q-list" class="muted">加载中...</div>
-    </div>
-  `;
-  $('#abuse-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    const next = structuredClone(state.policy);
-    next.abuse = {
-      max_conns_per_tenant: +f.get('max_conns') || 0,
-      new_conn_rate_per_sec: +f.get('conn_rate') || 0,
-      udp_pps_limit_per_tenant: +f.get('udp_pps') || 0,
-      auto_quarantine_enabled: f.get('auto_q') === 'on',
-      flush_conntrack_on_block: f.get('flush_ct') === 'on',
-      quarantine_threshold: +f.get('q_thresh') || 10,
-      quarantine_window_sec: +f.get('q_win') || 300,
-      quarantine_duration_sec: +f.get('q_dur') || 600,
-    };
-    try {
-      state.policy = await api('/api/policy', { method: 'PUT', body: next });
-      toast('防滥用规则已生效');
-      await loadAll();
-    } catch (err) { toast(err.message); }
-  });
-  $('#ban-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    try {
-      await api('/api/quarantine/ban', { method: 'POST', body: {
-        tenant_ip: f.get('tenant_ip'),
-        duration_sec: +f.get('duration_sec') || 600,
-        reason: f.get('reason'),
-      }});
-      toast('已加入内核隔离');
-      await loadAll();
-    } catch (err) { toast(err.message); }
-  });
-  loadQuarantineList();
-}
+  async function api(method, path, body) {
+    const opts = { method, headers: {} };
+    if (method !== 'GET') opts.headers['X-Snapgfw'] = '1';
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(path, opts);
+    if (res.status === 401 && path !== '/api/login') {
+      showLogin();
+      throw new Error('unauthorized');
+    }
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch {}
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
 
-async function loadQuarantineList() {
-  const el = $('#q-list');
-  if (!el) return;
-  try {
-    const list = await api('/api/quarantine') || [];
-    if (!list.length) { el.innerHTML = '<div class="muted">当前无被隔离的租户</div>'; return; }
-    el.innerHTML = `<div class="table-wrap"><table><tr><th>租户 IP</th><th>实例</th><th>原因</th><th>过期时间</th><th>操作</th></tr>` +
-      list.map(q => `<tr><td class="mono">${esc(q.tenant_ip)}</td><td>${esc(q.hostname||q.instance_id||'-')}</td><td>${esc(q.reason)}</td><td class="mono">${esc(q.expires_at)}</td><td><button class="btn" onclick="unbanIP('${esc(q.tenant_ip)}')">解除隔离</button></td></tr>`).join('') +
-      `</table></div>`;
-  } catch {}
-}
-window.unbanIP = async ip => {
-  await api('/api/quarantine/unban', { method: 'POST', body: { tenant_ip: ip } });
-  toast('已解除隔离：' + ip);
-  await loadAll();
-};
+  function showLogin() {
+    closeSSE();
+    clearInterval(state.pollTimer);
+    $('#app-view').classList.add('hidden');
+    $('#login-view').classList.remove('hidden');
+    $('#login-pass').focus();
+  }
 
-async function loadInstancesAndLogs() {
-  const [instRes, logs] = await Promise.all([api('/api/instances'), api('/api/logs')]);
-  state.instances = instRes;
-  const rows = instRes.instances || [];
-  $('#tab-instances').innerHTML = `
-    <div class="card">
-      <h2>租户实例状态 ${instRes.runman_available ? '<span class="badge ok">已只读同步 runman-agent</span>' : '<span class="badge warn">未检测到 runman-agent 数据目录</span>'}</h2>
-      <div class="table-wrap">
-        <table>
-          <tr><th>主机名 / UUID</th><th>内网 IP</th><th>宿主机端口映射</th><th>拦截 / 告警</th><th>状态</th><th>操作</th></tr>
-          ${rows.map(r => `
-            <tr>
-              <td><div>${esc(r.hostname||'-')}</div><div class="mono muted">${esc(r.id||'')}</div></td>
-              <td class="mono">${esc(r.ipv4)}${r.ipv6?'<br>'+esc(r.ipv6):''}</td>
-              <td class="mono">${(r.forwards||[]).map(f => `${f.proto}:${f.host_port}→${f.guest_port}`).join('<br>') || '-'}</td>
-              <td><span class="badge bad">${r.stats?.block_count||0}</span> / <span class="badge warn">${r.stats?.log_count||0}</span></td>
-              <td>${r.quarantined ? `<span class="badge bad">隔离中</span>` : `<span class="badge ok">正常</span>`}</td>
-              <td>
-                ${r.quarantined
-                  ? `<button class="btn" onclick="unbanIP('${esc(r.ipv4)}')">解封</button>`
-                  : `<button class="btn danger" onclick="banQuick('${esc(r.ipv4)}')">临时隔离</button>`}
-              </td>
-            </tr>`).join('') || '<tr><td colspan="6" class="muted">暂无实例记录</td></tr>'}
-        </table>
-      </div>
-    </div>
-    <div class="card">
-      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <h2 style="margin:0;">实时拦截与审计日志</h2>
-        <div class="row">
-          <input id="log-q" placeholder="搜索 IP / SNI / 协议" oninput="filterLogs()">
-          <button class="btn" onclick="filterLogs()">刷新</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table id="log-table">
-          <tr><th>时间</th><th>租户 IP</th><th>方向</th><th>对端 IP:端口</th><th>协议</th><th>动作</th><th>详情</th></tr>
-          <tbody id="log-body">${renderLogRows(logs||[])}</tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
+  async function enterApp() {
+    $('#login-view').classList.add('hidden');
+    $('#app-view').classList.remove('hidden');
+    populateProtoSelect();
+    await reloadAll();
+    startSSE();
+    clearInterval(state.pollTimer);
+    state.pollTimer = setInterval(refreshTelemetry, 8000);
+  }
 
-function renderLogRows(logs) {
-  return logs.map(ev => `
-    <tr>
-      <td class="mono muted">${esc((ev.ts||'').replace('T',' ').slice(0,19))}</td>
-      <td class="mono">${esc(ev.tenant_ip)}${ev.hostname?` (${esc(ev.hostname)})`:''}</td>
-      <td>${ev.dir==='in'?'入站':'出站'} · ${esc(ev.l4)}</td>
-      <td class="mono">${esc(ev.peer_ip)}:${ev.dst_port||0}${ev.host_port?` (映射:${ev.host_port})`:''}</td>
-      <td class="mono">${esc(ev.protocol)}</td>
-      <td><span class="badge ${ev.action==='block'||ev.action==='quarantine'?'bad':'warn'}">${esc(ev.action)}</span></td>
-      <td class="mono">${esc(ev.detail||'')}</td>
-    </tr>`).join('') || '<tr><td colspan="7" class="muted">暂无日志</td></tr>';
-}
-
-window.filterLogs = async () => {
-  const q = $('#log-q')?.value || '';
-  const logs = await api('/api/logs?q=' + encodeURIComponent(q));
-  const tb = $('#log-body');
-  if (tb) tb.innerHTML = renderLogRows(logs || []);
-};
-window.banQuick = async ip => {
-  if (!confirm(`确认临时隔离 ${ip} 10 分钟？`)) return;
-  await api('/api/quarantine/ban', { method: 'POST', body: { tenant_ip: ip, duration_sec: 600, reason: '面板快捷隔离' } });
-  toast('已隔离 ' + ip);
-  await loadAll();
-};
-
-function startSSE() {
-  if (state.sse) return;
-  const es = new EventSource('/api/logs/stream');
-  es.onmessage = e => {
-    try {
-      const ev = JSON.parse(e.data);
-      const tb = $('#log-body');
-      if (tb) {
-        if (tb.innerText.includes('暂无日志')) tb.innerHTML = '';
-        tb.insertAdjacentHTML('afterbegin', renderLogRows([ev]));
-        while (tb.children.length > 200) tb.removeChild(tb.lastChild);
+  async function reloadAll() {
+    const [ov, pol, instRes, bans, logs] = await Promise.all([
+      api('GET', '/api/overview'),
+      api('GET', '/api/policy'),
+      api('GET', '/api/instances'),
+      api('GET', '/api/quarantine'),
+      api('GET', '/api/logs'),
+    ]);
+    state.overview = ov;
+    state.policy = pol;
+    state.instances = instRes.instances || [];
+    state.bans = bans || [];
+    state.logs = logs || [];
+    state.dirtyPolicy = false;
+    state.dirtyPorts = false;
+    if (!state.policy.protocols.some(p => p.id === state.selectedProto)) {
+      state.selectedProto = state.policy.protocols[0]?.id || 'fet_tcp';
+    }
+    if (state.policy.port_rules?.length) {
+      if (state.selectedPortIdx < 0 || state.selectedPortIdx >= state.policy.port_rules.length) {
+        state.selectedPortIdx = 0;
       }
-    } catch {}
-  };
-  state.sse = es;
-}
-
-function renderSystem() {
-  const n = state.policy.notify || {};
-  const trusted = (state.policy.trusted_tenants || []).join(',');
-  $('#tab-system').innerHTML = `
-    <div class="card">
-      <h2>全局信任白名单 & 规则导入导出（跨节点模板同步）</h2>
-      <div class="row" style="margin-bottom:12px;">
-        <label style="flex:1;">免检信任租户 IP/CIDR (逗号分隔)
-          <input id="trusted-input" value="${esc(trusted)}" placeholder="10.91.0.10,10.91.0.20">
-        </label>
-        <button class="btn primary" onclick="saveTrusted()">保存白名单</button>
-        <a class="btn" href="/api/policy/export" download="natgfw-policy.json">导出当前配置 JSON</a>
-      </div>
-      <div class="col">
-        <label>粘贴配置 JSON 导入并立即生效
-          <textarea id="import-json" rows="5" placeholder='{"version":1,"protocols":[...]}'></textarea>
-        </label>
-        <div><button class="btn primary" onclick="importJSON()">导入 JSON 配置</button></div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>GeoSite / GeoIP 数据更新</h2>
-      <p class="muted">离线时自动使用内置核心国内域名兜底；联网下载完整 v2ray-rules-dat 可获得最全国内域名与国家 GeoIP 匹配。</p>
-      <button class="btn primary" id="btn-geodl" onclick="downloadGeo()">一键下载 / 更新 GeoSite & GeoIP</button>
-    </div>
-    <div class="card">
-      <h2>Telegram / Webhook 告警通知</h2>
-      <form id="notify-form" class="col" style="gap:10px;">
-        <div class="row">
-          <label style="flex:1;">Webhook URL<input name="webhook_url" value="${esc(n.webhook_url||'')}" placeholder="https://..."></label>
-          <label>Telegram Bot Token<input name="tg_token" value="${esc(n.telegram_token||'')}"></label>
-          <label>Telegram Chat ID<input name="tg_chat" value="${esc(n.telegram_chat_id||'')}"></label>
-        </div>
-        <div class="row">
-          <label class="switch"><input type="checkbox" name="alert_block" ${n.alert_on_block?'checked':''}>每次拦截推送告警(受冷却时间限制)</label>
-          <label class="switch"><input type="checkbox" name="alert_ban" ${n.alert_on_ban?'checked':''}>自动熔断隔离时推送告警</label>
-          <label>冷却间隔(秒)<input name="cooldown" type="number" value="${n.min_interval_sec||60}" style="width:90px"></label>
-          <button class="btn primary" type="submit">保存告警配置</button>
-          <button class="btn" type="button" onclick="testNotify()">发送测试消息</button>
-        </div>
-      </form>
-    </div>
-    <div class="card">
-      <h2>修改管理员密码</h2>
-      <form id="pw-form" class="row">
-        <label>新密码 (至少 6 位)<input name="password" type="password" minlength="6" required></label>
-        <button class="btn primary" type="submit">更新密码</button>
-      </form>
-    </div>
-  `;
-
-  $('#notify-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    const next = structuredClone(state.policy);
-    next.notify = {
-      webhook_url: String(f.get('webhook_url') || '').trim(),
-      telegram_token: String(f.get('tg_token') || '').trim(),
-      telegram_chat_id: String(f.get('tg_chat') || '').trim(),
-      alert_on_block: f.get('alert_block') === 'on',
-      alert_on_ban: f.get('alert_ban') === 'on',
-      min_interval_sec: +f.get('cooldown') || 60,
-    };
-    state.policy = await api('/api/policy', { method: 'PUT', body: next });
-    toast('告警配置已保存');
-  });
-  $('#pw-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    try {
-      await api('/api/settings/password', { method: 'POST', body: { password: f.get('password') } });
-      e.target.reset();
-      toast('密码已更新');
-    } catch (err) { toast(err.message); }
-  });
-}
-
-window.saveTrusted = async () => {
-  const next = structuredClone(state.policy);
-  next.trusted_tenants = splitCSV($('#trusted-input').value);
-  try {
-    state.policy = await api('/api/policy', { method: 'PUT', body: next });
-    toast('白名单已生效');
-    await loadAll();
-  } catch (err) { toast(err.message); }
-};
-window.importJSON = async () => {
-  try {
-    const obj = JSON.parse($('#import-json').value);
-    state.policy = await api('/api/policy/import', { method: 'POST', body: obj });
-    toast('配置已导入并生效');
-    await loadAll();
-  } catch (err) { toast('导入失败：' + err.message); }
-};
-window.downloadGeo = async () => {
-  const btn = $('#btn-geodl');
-  btn.disabled = true; btn.textContent = '正在下载更新...';
-  try {
-    await api('/api/geo/download', { method: 'POST' });
-    toast('GeoSite & GeoIP 更新成功');
-    await loadAll();
-  } catch (err) { toast('更新失败：' + err.message); }
-  finally { btn.disabled = false; btn.textContent = '一键下载 / 更新 GeoSite & GeoIP'; }
-};
-window.testNotify = async () => {
-  try { await api('/api/notify/test', { method: 'POST' }); toast('已发送测试告警'); }
-  catch (err) { toast(err.message); }
-};
-
-(async () => {
-  try {
-    await loadAll();
-    showApp();
-  } catch {
-    showLogin();
+      state.draftPort = structuredClone(state.policy.port_rules[state.selectedPortIdx]);
+    } else {
+      state.selectedPortIdx = -1;
+      state.draftPort = emptyPortRule();
+    }
+    renderAll();
   }
+
+  async function refreshTelemetry() {
+    try {
+      const [ov, instRes, bans] = await Promise.all([
+        api('GET', '/api/overview'),
+        api('GET', '/api/instances'),
+        api('GET', '/api/quarantine'),
+      ]);
+      state.overview = ov;
+      state.instances = instRes.instances || [];
+      state.bans = bans || [];
+      renderSidebar();
+      renderMetrics();
+      if (state.nav === 'instances') renderInstances();
+      if (state.nav === 'ports') renderBans();
+    } catch {}
+  }
+
+  function renderAll() {
+    renderSidebar();
+    renderMetrics();
+    renderProtocols();
+    renderProtoInspector();
+    renderPorts();
+    renderPortInspector();
+    renderLimits();
+    renderBans();
+    renderInstances();
+    renderLogs();
+    renderSystem();
+    syncSaveButtons();
+  }
+
+  function syncSaveButtons() {
+    const bp = $('#btn-save-policy');
+    bp.disabled = !state.dirtyPolicy;
+    bp.textContent = state.dirtyPolicy ? '保存更改' : '已同步';
+    const bpt = $('#btn-save-ports');
+    bpt.disabled = !state.dirtyPorts;
+    bpt.textContent = state.dirtyPorts ? '保存更改' : '已同步';
+  }
+
+  function renderSidebar() {
+    const ov = state.overview;
+    if (!ov) return;
+    const bypass = !!ov.global_bypass;
+    const dot = $('#sb-status-dot');
+    dot.className = 'dot' + (bypass ? ' warn' : '');
+    $('#sb-iface-name').textContent = bypass ? '旁路中' : (ov.bridge_iface || 'rmbr0');
+    $('#sb-mem').textContent = `内存 ${(ov.heap_alloc_mb || 0).toFixed(1)} MB`;
+    $('#sb-qdrop').textContent = `队列 ${ov.engine?.queue_dropped || 0}`;
+    const geoEl = $('#sb-geo');
+    if (ov.geo_fallback) { geoEl.textContent = '内置兜底'; geoEl.style.color = 'var(--warn)'; }
+    else { geoEl.textContent = '已就绪'; geoEl.style.color = 'var(--ok)'; }
+    $('#btn-bypass').setAttribute('aria-checked', String(bypass));
+    $('#sb-bypass-row').classList.toggle('on', bypass);
+    const cap = ov.audit_ring_cap || 200;
+    const disk = ov.audit_max_disk_mb || 0;
+    $('#log-cap-hint').textContent = disk > 0 ? `内存≤${cap}条 · 磁盘≤${disk.toFixed(0)}MB` : `纯内存≤${cap}条`;
+  }
+
+  function renderMetrics() {
+    const ov = state.overview;
+    if (!ov) return;
+    $('#m-pkts').textContent = (ov.engine?.packets_total || 0).toLocaleString();
+    const blk = ov.audit_blocks || 0;
+    const bEl = $('#m-blocks');
+    bEl.textContent = blk.toLocaleString();
+    bEl.className = 'metric-val' + (blk > 0 ? ' danger' : '');
+    $('#m-insts').textContent = ov.instance_count || 0;
+    const q = ov.quarantine_count || 0;
+    const qEl = $('#m-bans');
+    qEl.textContent = q;
+    qEl.className = 'metric-val' + (q > 0 ? ' warn' : '');
+    $('#m-wkrs').textContent = ov.engine?.worker_count || 0;
+  }
+
+  // ---- View 1: Protocols ----
+  function renderProtocols() {
+    if (!state.policy) return;
+    const kw = ($('#proto-search').value || '').trim().toLowerCase();
+    const list = state.policy.protocols || [];
+    const onCount = list.filter(p => p.enabled).length;
+    $('#proto-enabled-count').textContent = `已启用 ${onCount} / ${list.length}`;
+
+    const rowsEl = $('#proto-rows');
+    rowsEl.innerHTML = '';
+    for (const p of list) {
+      const meta = PROTO_META[p.id] || { label: p.name || p.id, fields: [] };
+      if (kw && !meta.label.toLowerCase().includes(kw) && !p.id.toLowerCase().includes(kw)) continue;
+      const row = document.createElement('div');
+      row.className = 'row' + (state.selectedProto === p.id ? ' selected' : '');
+      row.dataset.proto = p.id;
+      row.innerHTML = `
+        <button type="button" class="switch" role="switch" aria-checked="${p.enabled}" aria-label="${esc(meta.label)}"></button>
+        <div class="row-title"><span class="row-name">${esc(meta.label)}</span><span class="row-id">${esc(p.id)}</span></div>
+        <div class="seg" role="group" aria-label="策略动作">
+          ${['block','log','allow'].map(a => `<button type="button" data-act="${a}" class="${p.action===a?'active':''}">${ACT_LABEL[a]}</button>`).join('')}
+        </div>
+        <button type="button" class="dir-btn" title="点击切换方向">${DIR_LABEL[p.direction] || p.direction}</button>
+        <span class="chev">›</span>
+      `;
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        state.selectedProto = p.id;
+        renderProtocols();
+        renderProtoInspector();
+      });
+      row.querySelector('.switch').addEventListener('click', () => {
+        p.enabled = !p.enabled;
+        state.policy.active_preset = 'custom';
+        state.dirtyPolicy = true;
+        renderProtocols();
+        if (state.selectedProto === p.id) renderProtoInspector();
+        syncSaveButtons();
+      });
+      row.querySelectorAll('.seg button').forEach(btn => btn.addEventListener('click', () => {
+        p.action = btn.dataset.act;
+        state.policy.active_preset = 'custom';
+        state.dirtyPolicy = true;
+        renderProtocols();
+        if (state.selectedProto === p.id) renderProtoInspector();
+        syncSaveButtons();
+      }));
+      row.querySelector('.dir-btn').addEventListener('click', () => {
+        p.direction = DIR_CYCLE[(DIR_CYCLE.indexOf(p.direction) + 1) % DIR_CYCLE.length];
+        state.policy.active_preset = 'custom';
+        state.dirtyPolicy = true;
+        renderProtocols();
+        if (state.selectedProto === p.id) renderProtoInspector();
+        syncSaveButtons();
+      });
+      rowsEl.appendChild(row);
+    }
+  }
+
+  function renderProtoInspector() {
+    const box = $('#proto-inspector');
+    if (!state.policy) { box.innerHTML = ''; return; }
+    const p = (state.policy.protocols || []).find(x => x.id === state.selectedProto);
+    if (!p) { box.innerHTML = ''; return; }
+    const meta = PROTO_META[p.id] || { label: p.name || p.id, fields: [] };
+    p.options = p.options || {};
+
+    let extraHTML = '';
+    if (meta.fields.includes('min_udp')) {
+      extraHTML += `<div class="field"><label>最小 UDP 包长 (bytes)</label><input id="pi-min-udp" class="mono" type="number" min="16" value="${p.options.min_udp_len || 48}"></div>`;
+    }
+    if (meta.fields.includes('ws_mode')) {
+      const m = p.ws_mode || 'two_stage_high';
+      extraHTML += `<div class="field"><label>WebSocket 模式</label><div class="seg" id="pi-ws-mode" style="width:100%">
+        <button type="button" data-v="two_stage_high" class="${m==='two_stage_high'?'active':''}" style="flex:1">两阶段高熵</button>
+        <button type="button" data-v="block_all" class="${m==='block_all'?'active':''}" style="flex:1">全封</button>
+        <button type="button" data-v="log_only" class="${m==='log_only'?'active':''}" style="flex:1">仅记录</button>
+      </div></div>`;
+    }
+    if (meta.fields.includes('domains')) {
+      extraHTML += `
+        <div class="field"><label>GeoSite 分类</label><input id="pi-gs" class="mono" value="${esc((p.geosite_cats||[]).join(', '))}" placeholder="例: cn, category-ads-all"></div>
+        <div class="field"><label>匹配拦截域名</label><textarea id="pi-md" placeholder="每行一个域名或 wildcard">${esc((p.match_domains||[]).join('\n'))}</textarea></div>
+        <div class="field"><label>放行域名</label><input id="pi-ed" class="mono" value="${esc((p.exclude_domains||[]).join(', '))}" placeholder="例: internal.example.com"></div>
+      `;
+    }
+    if (meta.fields.includes('tls_anomaly')) {
+      extraHTML += `
+        <div class="sys-inline" style="font-size:12.5px"><span>Fake TLS/HTTP Obfs</span><button type="button" id="pi-fake-obfs" class="switch" role="switch" aria-checked="${!!p.options.block_fake_obfs}"></button></div>
+        <div class="sys-inline" style="font-size:12.5px"><span>拦截 ECH / ESNI</span><button type="button" id="pi-ech" class="switch" role="switch" aria-checked="${!!p.options.block_ech}"></button></div>
+        <div class="sys-inline" style="font-size:12.5px"><span>拦截无 SNI 的 TLS</span><button type="button" id="pi-nosni" class="switch" role="switch" aria-checked="${!!p.options.block_no_sni}"></button></div>
+      `;
+    }
+    if (meta.fields.includes('allow_std_ssh')) {
+      extraHTML += `<div class="sys-inline" style="font-size:12.5px"><span>豁免标准 22 端口</span><button type="button" id="pi-ssh22" class="switch" role="switch" aria-checked="${!!p.options.allow_std_ssh_port}"></button></div>`;
+    }
+    if (meta.fields.includes('max_dns')) {
+      extraHTML += `<div class="field"><label>最大 DNS 载荷 (bytes)</label><input id="pi-dns-max" class="mono" type="number" min="64" value="${p.options.max_dns_payload || 512}"></div>`;
+    }
+
+    box.innerHTML = `
+      <div class="insp-head">
+        <div class="insp-title"><h2>${esc(meta.label)}</h2><span class="row-id">${esc(p.id)}</span></div>
+        <button type="button" id="pi-enabled" class="switch" role="switch" aria-checked="${p.enabled}" aria-label="启用 ${esc(meta.label)}"></button>
+      </div>
+      <div class="field"><label>处置动作</label>
+        <div id="pi-act" class="seg" style="width:100%">
+          ${['block','log','allow'].map(a => `<button type="button" data-v="${a}" class="${p.action===a?'active':''}" style="flex:1">${ACT_LABEL[a]}</button>`).join('')}
+        </div>
+      </div>
+      <div class="field"><label>流量方向</label>
+        <div id="pi-dir" class="seg" style="width:100%">
+          ${DIR_CYCLE.map(d => `<button type="button" data-v="${d}" class="${p.direction===d?'active':''}" style="flex:1">${DIR_LABEL[d]}</button>`).join('')}
+        </div>
+      </div>
+      ${extraHTML}
+      <div class="field"><label>排除端口</label><input id="pi-exp-ports" class="mono" value="${esc((p.except_ports||[]).join(', '))}" placeholder="例: 443, 8443"></div>
+      <div class="field"><label>排除租户 IP</label><input id="pi-exp-tenants" class="mono" value="${esc((p.except_tenants||[]).join(', '))}" placeholder="例: 10.10.0.2, 10.10.0.0/24"></div>
+    `;
+
+    const dirty = () => { state.policy.active_preset = 'custom'; state.dirtyPolicy = true; syncSaveButtons(); renderProtocols(); };
+    $('#pi-enabled').addEventListener('click', () => { p.enabled = !p.enabled; dirty(); renderProtoInspector(); });
+    box.querySelectorAll('#pi-act button').forEach(b => b.addEventListener('click', () => { p.action = b.dataset.v; dirty(); renderProtoInspector(); }));
+    box.querySelectorAll('#pi-dir button').forEach(b => b.addEventListener('click', () => { p.direction = b.dataset.v; dirty(); renderProtoInspector(); }));
+    if ($('#pi-ws-mode')) box.querySelectorAll('#pi-ws-mode button').forEach(b => b.addEventListener('click', () => { p.ws_mode = b.dataset.v; dirty(); renderProtoInspector(); }));
+    if ($('#pi-min-udp')) $('#pi-min-udp').addEventListener('input', (e) => { p.options.min_udp_len = parseInt(e.target.value,10) || 48; dirty(); });
+    if ($('#pi-gs')) $('#pi-gs').addEventListener('input', (e) => { p.geosite_cats = splitCSV(e.target.value); dirty(); });
+    if ($('#pi-md')) $('#pi-md').addEventListener('input', (e) => { p.match_domains = splitLines(e.target.value); dirty(); });
+    if ($('#pi-ed')) $('#pi-ed').addEventListener('input', (e) => { p.exclude_domains = splitCSV(e.target.value); dirty(); });
+    if ($('#pi-fake-obfs')) $('#pi-fake-obfs').addEventListener('click', () => { p.options.block_fake_obfs = !p.options.block_fake_obfs; dirty(); renderProtoInspector(); });
+    if ($('#pi-ech')) $('#pi-ech').addEventListener('click', () => { p.options.block_ech = !p.options.block_ech; dirty(); renderProtoInspector(); });
+    if ($('#pi-nosni')) $('#pi-nosni').addEventListener('click', () => { p.options.block_no_sni = !p.options.block_no_sni; dirty(); renderProtoInspector(); });
+    if ($('#pi-ssh22')) $('#pi-ssh22').addEventListener('click', () => { p.options.allow_std_ssh_port = !p.options.allow_std_ssh_port; dirty(); renderProtoInspector(); });
+    if ($('#pi-dns-max')) $('#pi-dns-max').addEventListener('input', (e) => { p.options.max_dns_payload = parseInt(e.target.value,10) || 512; dirty(); });
+    $('#pi-exp-ports').addEventListener('input', (e) => { p.except_ports = splitCSV(e.target.value).map(x => parseInt(x,10)).filter(n => n > 0 && n <= 65535); dirty(); });
+    $('#pi-exp-tenants').addEventListener('input', (e) => { p.except_tenants = splitCSV(e.target.value); dirty(); });
+  }
+
+  // ---- View 2: Ports & Limits ----
+  function emptyPortRule() {
+    return {
+      id: 'rule-' + Math.random().toString(36).slice(2, 8),
+      name: '', enabled: true, priority: 100, direction: 'out', scope: 'dst',
+      l4_proto: 'tcp', port_start: 25, port_end: 25, tenant_ip: '', peer_type: 'any',
+      peer_cidr: '', geoip_codes: [], action: 'block',
+    };
+  }
+
+  function renderPorts() {
+    if (!state.policy) return;
+    const rules = state.policy.port_rules || [];
+    $('#port-count').textContent = `${rules.length} 条规则`;
+    const box = $('#port-rows');
+    if (!rules.length) {
+      box.innerHTML = `<div class="empty-line">暂无 L4 端口规则</div>`;
+      return;
+    }
+    box.innerHTML = '';
+    rules.forEach((r, idx) => {
+      const pTxt = !r.port_start ? '全部' : (r.port_end && r.port_end > r.port_start ? `${r.port_start}-${r.port_end}` : `${r.port_start}`);
+      const peerTxt = r.peer_type === 'cidr' ? (r.peer_cidr || 'CIDR') : r.peer_type === 'geoip' ? `GeoIP ${(r.geoip_codes||[]).join(',')}` : '不限';
+      const row = document.createElement('div');
+      row.className = 'row' + (state.selectedPortIdx === idx ? ' selected' : '');
+      row.innerHTML = `
+        <button type="button" class="switch" role="switch" aria-checked="${r.enabled}"></button>
+        <span class="mono" style="width:44px;color:var(--text-2);font-size:12px">${r.priority}</span>
+        <span style="flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name || '未命名规则')}</span>
+        <span style="width:96px;font-size:12px;color:var(--text-2)">${DIR_LABEL[r.direction]||r.direction} · ${SCOPE_LABEL[r.scope]||r.scope}</span>
+        <span class="mono" style="width:106px;font-size:11.5px">${esc((r.l4_proto||'tcp').toUpperCase())} ${esc(pTxt)}</span>
+        <span class="mono" style="width:92px;font-size:11.5px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(peerTxt)}</span>
+        <span style="width:52px;display:inline-flex;align-items:center;gap:5px;font-size:12px;color:${r.action==='allow'?'var(--ok)':'var(--danger)'}"><span class="dot ${r.action==='allow'?'':'danger'}"></span>${r.action==='allow'?'放行':'拦截'}</span>
+      `;
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.switch')) return;
+        state.selectedPortIdx = idx;
+        state.draftPort = structuredClone(r);
+        renderPorts();
+        renderPortInspector();
+      });
+      row.querySelector('.switch').addEventListener('click', () => {
+        r.enabled = !r.enabled;
+        state.dirtyPorts = true;
+        renderPorts();
+        syncSaveButtons();
+      });
+      box.appendChild(row);
+    });
+  }
+
+  function renderPortInspector() {
+    const box = $('#port-inspector');
+    const r = state.draftPort || emptyPortRule();
+    const isNew = state.selectedPortIdx < 0;
+    const pt = r.peer_type || 'any';
+    box.innerHTML = `
+      <div class="insp-head">
+        <h2 style="margin:0;font-size:13.5px">${isNew ? '新建端口规则' : '编辑端口规则'}</h2>
+        ${!isNew ? '<button type="button" id="pr-del" class="btn-danger-text">删除</button>' : ''}
+      </div>
+      <div class="field"><label>规则名称</label><input id="pr-name" value="${esc(r.name)}" placeholder="例: 禁止出站 SMTP 25"></div>
+      <div class="grid-2">
+        <div class="field"><label>优先级</label><input id="pr-prio" class="mono" type="number" value="${r.priority||100}"></div>
+        <div class="field"><label>L4 协议</label><select id="pr-l4">
+          ${['tcp','udp','both','icmp','all'].map(v=>`<option value="${v}" ${r.l4_proto===v?'selected':''}>${v==='both'?'TCP+UDP':v.toUpperCase()}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="field"><label>流量方向</label>
+        <div id="pr-dir" class="seg" style="width:100%">
+          ${DIR_CYCLE.map(d=>`<button type="button" data-v="${d}" class="${r.direction===d?'active':''}" style="flex:1">${DIR_LABEL[d]}</button>`).join('')}
+        </div>
+      </div>
+      <div class="field"><label>端口作用域</label>
+        <div id="pr-scope" class="seg" style="width:100%">
+          <button type="button" data-v="dst" class="${r.scope==='dst'?'active':''}" style="flex:1">目标端口</button>
+          <button type="button" data-v="host_mapped" class="${r.scope==='host_mapped'?'active':''}" style="flex:1">宿主机</button>
+          <button type="button" data-v="src" class="${r.scope==='src'?'active':''}" style="flex:1">源端口</button>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>起始端口</label><input id="pr-ps" class="mono" type="number" min="0" max="65535" value="${r.port_start||0}"></div>
+        <div class="field"><label>结束端口</label><input id="pr-pe" class="mono" type="number" min="0" max="65535" value="${r.port_end||0}"></div>
+      </div>
+      <div class="field"><label>对端过滤</label>
+        <div id="pr-pt" class="seg" style="width:100%">
+          <button type="button" data-v="any" class="${pt==='any'?'active':''}" style="flex:1">不限</button>
+          <button type="button" data-v="cidr" class="${pt==='cidr'?'active':''}" style="flex:1">CIDR</button>
+          <button type="button" data-v="geoip" class="${pt==='geoip'?'active':''}" style="flex:1">GeoIP</button>
+        </div>
+      </div>
+      ${pt==='cidr' ? `<div class="field"><label>对端 CIDR</label><input id="pr-cidr" class="mono" value="${esc(r.peer_cidr||'')}" placeholder="例: 1.2.3.0/24"></div>` : ''}
+      ${pt==='geoip' ? `<div class="field"><label>GeoIP 国家代码</label><input id="pr-geoip" class="mono" value="${esc((r.geoip_codes||[]).join(', '))}" placeholder="例: CN, US"></div>` : ''}
+      <div class="field"><label>指定租户 IP</label><input id="pr-tenant" class="mono" value="${esc(r.tenant_ip||'')}" placeholder="留空表示全部租户"></div>
+      <div class="field"><label>处置动作</label>
+        <div id="pr-act" class="seg" style="width:100%">
+          <button type="button" data-v="block" class="${r.action==='block'?'active':''}" style="flex:1">拦截</button>
+          <button type="button" data-v="allow" class="${r.action==='allow'?'active':''}" style="flex:1">放行</button>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <button type="button" id="pr-apply" class="btn btn-primary" style="width:100%;height:34px">${isNew ? '添加到规则列表' : '更新此规则'}</button>
+    `;
+
+    $('#pr-name').oninput = e => r.name = e.target.value;
+    $('#pr-prio').oninput = e => r.priority = parseInt(e.target.value,10) || 100;
+    $('#pr-l4').onchange = e => r.l4_proto = e.target.value;
+    $('#pr-ps').oninput = e => r.port_start = parseInt(e.target.value,10) || 0;
+    $('#pr-pe').oninput = e => r.port_end = parseInt(e.target.value,10) || 0;
+    $('#pr-tenant').oninput = e => r.tenant_ip = e.target.value.trim();
+    if ($('#pr-cidr')) $('#pr-cidr').oninput = e => r.peer_cidr = e.target.value.trim();
+    if ($('#pr-geoip')) $('#pr-geoip').oninput = e => r.geoip_codes = splitCSV(e.target.value).map(s=>s.toUpperCase());
+    box.querySelectorAll('#pr-dir button').forEach(b => b.onclick = () => { r.direction = b.dataset.v; renderPortInspector(); });
+    box.querySelectorAll('#pr-scope button').forEach(b => b.onclick = () => { r.scope = b.dataset.v; renderPortInspector(); });
+    box.querySelectorAll('#pr-pt button').forEach(b => b.onclick = () => { r.peer_type = b.dataset.v; renderPortInspector(); });
+    box.querySelectorAll('#pr-act button').forEach(b => b.onclick = () => { r.action = b.dataset.v; renderPortInspector(); });
+
+    if ($('#pr-del')) $('#pr-del').onclick = () => {
+      state.policy.port_rules.splice(state.selectedPortIdx, 1);
+      state.selectedPortIdx = state.policy.port_rules.length ? 0 : -1;
+      state.draftPort = state.selectedPortIdx >= 0 ? structuredClone(state.policy.port_rules[0]) : emptyPortRule();
+      state.dirtyPorts = true;
+      renderPorts();
+      renderPortInspector();
+      syncSaveButtons();
+    };
+    $('#pr-apply').onclick = () => {
+      r.name = (r.name || '').trim() || `端口 ${r.port_start || '全部'}`;
+      if (!state.policy.port_rules) state.policy.port_rules = [];
+      if (isNew) {
+        state.policy.port_rules.push(structuredClone(r));
+        state.selectedPortIdx = state.policy.port_rules.length - 1;
+      } else {
+        state.policy.port_rules[state.selectedPortIdx] = structuredClone(r);
+      }
+      state.dirtyPorts = true;
+      renderPorts();
+      renderPortInspector();
+      syncSaveButtons();
+    };
+  }
+
+  function renderLimits() {
+    if (!state.policy) return;
+    const ab = state.policy.abuse || {};
+    $('#ab-conns').value = ab.max_conns_per_tenant || 0;
+    $('#ab-rate').value = ab.new_conn_rate_per_sec || 0;
+    $('#ab-pps').value = ab.udp_pps_limit_per_tenant || 0;
+    $('#ab-thresh').value = ab.quarantine_threshold || 10;
+    $('#ab-win').value = ab.quarantine_window_sec || 300;
+    $('#ab-dur').value = ab.quarantine_duration_sec || 600;
+    $('#ab-flush').setAttribute('aria-checked', String(!!ab.flush_conntrack_on_block));
+    $('#ab-autoban').setAttribute('aria-checked', String(!!ab.auto_quarantine_enabled));
+  }
+
+  function renderBans() {
+    const bans = state.bans || [];
+    $('#ban-count').textContent = `${bans.length} 个租户`;
+    const box = $('#ban-rows');
+    if (!bans.length) {
+      box.innerHTML = `<div style="font-size:12px;color:var(--text-muted);padding:8px 0">当前无隔离租户</div>`;
+      return;
+    }
+    box.innerHTML = '';
+    const now = Date.now();
+    for (const b of bans) {
+      const rem = Math.max(0, Math.round((new Date(b.expires_at).getTime() - now) / 1000));
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.padding = '0';
+      row.style.cursor = 'default';
+      row.innerHTML = `
+        <span class="mono" style="width:120px">${esc(b.tenant_ip)}</span>
+        <span style="flex:1;color:var(--text-2);font-size:12.5px">${esc(b.reason)}</span>
+        <span class="mono" style="width:92px;color:var(--warn);font-size:12px">剩余 ${fmtDur(rem)}</span>
+        <button type="button" class="btn-danger-text">解封</button>
+      `;
+      row.querySelector('button').onclick = async () => {
+        try {
+          await api('POST', '/api/quarantine/unban', { tenant_ip: b.tenant_ip });
+          toast(`已解封 ${b.tenant_ip}`);
+          await refreshTelemetry();
+        } catch (err) { toast(err.message, true); }
+      };
+      box.appendChild(row);
+    }
+  }
+
+  // ---- View 3: Instances & Logs ----
+  function renderInstances() {
+    const box = $('#inst-rows');
+    const list = state.instances || [];
+    if (!list.length) {
+      box.innerHTML = `<div class="empty-line">暂未发现容器实例</div>`;
+      return;
+    }
+    box.innerHTML = '';
+    for (const inst of list) {
+      const ip = inst.ipv4 || inst.ipv6 || '';
+      const sel = state.logFilter.tenant && state.logFilter.tenant === ip;
+      const banned = !!inst.quarantined;
+      const blk = inst.stats?.block_count || 0;
+      const fwds = (inst.forwards || []).map(f => `${f.host_port}→${f.guest_port}`).join(', ') || '—';
+      const spec = inst.cpu ? `${inst.cpu}C · ${inst.ram_mb || 0}M` : '—';
+      const row = document.createElement('div');
+      row.className = 'row' + (sel ? ' selected' : '');
+      row.style.padding = '0 24px';
+      row.innerHTML = `
+        <span style="width:170px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(inst.id ? `#${inst.id}  ` : '')}${esc(inst.hostname || ip)}</span>
+        <span class="mono" style="width:120px;font-size:12px">${esc(ip || '—')}</span>
+        <span class="mono" style="width:104px;font-size:11.5px;color:var(--text-muted)">${esc(spec)}</span>
+        <span class="mono" style="flex:1;font-size:11.5px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(fwds)}</span>
+        <span class="mono" style="width:68px;text-align:right;color:${blk>0?'var(--danger)':'var(--text-muted)'}">${blk}</span>
+        <span style="width:80px;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:${banned?'var(--danger)':'var(--text-2)'}"><span class="dot ${banned?'danger':''}"></span>${banned?'已隔离':'运行中'}</span>
+        <button type="button" class="${banned?'btn-danger-text':'btn-quiet'}" style="width:52px;text-align:right">${banned?'解封':'隔离'}</button>
+      `;
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        if (!ip) return;
+        state.logFilter.tenant = (state.logFilter.tenant === ip) ? '' : ip;
+        renderInstances();
+        renderLogs();
+      });
+      row.querySelector('button').addEventListener('click', async () => {
+        if (!ip) return;
+        try {
+          if (banned) {
+            await api('POST', '/api/quarantine/unban', { tenant_ip: ip });
+            toast(`已解封 ${ip}`);
+          } else {
+            await api('POST', '/api/quarantine/ban', { tenant_ip: ip, reason: '控制台快速隔离', duration_sec: 1800 });
+            toast(`已隔离 ${ip}`);
+          }
+          await refreshTelemetry();
+        } catch (err) { toast(err.message, true); }
+      });
+      box.appendChild(row);
+    }
+  }
+
+  function renderLogs() {
+    const chip = $('#log-tenant-chip');
+    if (state.logFilter.tenant) {
+      chip.classList.remove('hidden');
+      chip.textContent = `${state.logFilter.tenant} ×`;
+    } else {
+      chip.classList.add('hidden');
+    }
+
+    const q = (state.logFilter.q || '').toLowerCase();
+    const actF = state.logFilter.action;
+    const protoF = state.logFilter.proto;
+    const tenF = state.logFilter.tenant;
+
+    const filtered = (state.logs || []).filter(ev => {
+      if (tenF && ev.tenant_ip !== tenF) return false;
+      if (actF && ev.action !== actF) return false;
+      if (protoF && ev.protocol !== protoF) return false;
+      if (q) {
+        const hay = `${ev.tenant_ip} ${ev.hostname} ${ev.peer_ip} ${ev.dst_port} ${ev.host_port} ${ev.protocol} ${ev.detail}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }).slice(0, 200);
+
+    const box = $('#log-rows');
+    if (!filtered.length) {
+      box.innerHTML = `<div class="empty-line" style="padding:24px">暂无匹配的审计记录</div>`;
+      return;
+    }
+    box.innerHTML = filtered.map(ev => {
+      const ts = ev.ts ? new Date(ev.ts).toTimeString().slice(0, 8) : '--:--:--';
+      const tenant = ev.hostname ? `${ev.tenant_ip} (${ev.hostname})` : (ev.tenant_ip || '—');
+      const peer = ev.peer_ip ? `${ev.peer_ip}:${ev.dst_port || ''}` : '—';
+      const cls = ev.action === 'quarantine' ? 'act-quarantine' : ev.action === 'block' ? 'act-block' : 'act-log';
+      return `<div class="log-row">
+        <span style="color:var(--text-muted)">${esc(ts)}</span>
+        <span class="${cls}">${esc(ACT_LABEL[ev.action] || ev.action)}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(tenant)}</span>
+        <span style="color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(peer)}</span>
+        <span>${esc(ev.protocol)}</span>
+        <span style="color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(ev.detail || '')}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function startSSE() {
+    closeSSE();
+    const sse = new EventSource('/api/logs/stream');
+    state.sse = sse;
+    sse.onopen = () => {
+      $('#sse-dot').className = 'dot';
+      $('#sse-txt').textContent = '实时流已连接';
+    };
+    sse.onerror = () => {
+      $('#sse-dot').className = 'dot warn';
+      $('#sse-txt').textContent = '重连中';
+    };
+    sse.onmessage = (e) => {
+      if (state.logPaused || !e.data) return;
+      try {
+        const ev = JSON.parse(e.data);
+        const cap = state.overview?.audit_ring_cap || 200;
+        state.logs.unshift(ev);
+        if (state.logs.length > cap) state.logs.length = cap;
+        if (state.nav === 'instances') renderLogs();
+      } catch {}
+    };
+  }
+  function closeSSE() { if (state.sse) { state.sse.close(); state.sse = null; } }
+
+  // ---- View 4: System ----
+  function renderSystem() {
+    if (!state.policy) return;
+    $('#sys-trusted').value = (state.policy.trusted_tenants || []).join(', ');
+    const n = state.policy.notify || {};
+    $('#sys-webhook').value = n.webhook_url || '';
+    $('#sys-tg-token').value = n.telegram_token || '';
+    $('#sys-tg-chat').value = n.telegram_chat_id || '';
+    $('#sys-notify-cd').value = n.min_interval_sec || 60;
+    $('#sys-alert-blk').setAttribute('aria-checked', String(!!n.alert_on_block));
+    $('#sys-alert-ban').setAttribute('aria-checked', String(!!n.alert_on_ban));
+    if (state.overview) {
+      $('#dot-geosite').className = 'dot' + (state.overview.geosite_present ? '' : ' warn');
+      $('#txt-geosite').textContent = state.overview.geosite_present ? 'GeoSite · 已就绪' : 'GeoSite · 兜底模式';
+      $('#dot-geoip').className = 'dot' + (state.overview.geoip_present ? '' : ' muted');
+      $('#txt-geoip').textContent = state.overview.geoip_present ? 'GeoIP · 已就绪' : 'GeoIP · 未下载';
+    }
+  }
+
+  function populateProtoSelect() {
+    const sel = $('#log-proto');
+    sel.innerHTML = '<option value="">全部协议</option>' + Object.keys(PROTO_META).map(k => `<option value="${k}">${k}</option>`).join('') + '<option value="quarantine">quarantine</option>';
+  }
+
+  function splitCSV(s) { return String(s||'').split(',').map(x=>x.trim()).filter(Boolean); }
+  function splitLines(s) { return String(s||'').split(/[\r\n,]+/).map(x=>x.trim()).filter(Boolean); }
+  function fmtDur(sec) { if (sec < 60) return `${sec}s`; const m = Math.floor(sec/60); return m < 60 ? `${m}m${sec%60}s` : `${Math.floor(m/60)}h${m%60}m`; }
+
+  async function savePolicy(okMsg = '策略已生效') {
+    const p = await api('PUT', '/api/policy', state.policy);
+    state.policy = p;
+    state.dirtyPolicy = false;
+    state.dirtyPorts = false;
+    renderAll();
+    toast(okMsg);
+  }
+
+  // ---- Wire Static Events ----
+  document.querySelectorAll('.nav-item').forEach(btn => btn.onclick = () => {
+    state.nav = btn.dataset.nav;
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + state.nav));
+    if (state.nav === 'instances') { renderInstances(); renderLogs(); }
+    if (state.nav === 'system') renderSystem();
+  });
+
+  $('#login-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const errEl = $('#login-err');
+    errEl.classList.add('hidden');
+    try {
+      await api('POST', '/api/login', { username: $('#login-user').value.trim(), password: $('#login-pass').value });
+      $('#login-pass').value = '';
+      await enterApp();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  };
+
+  $('#btn-logout').onclick = async () => {
+    try { await api('POST', '/api/logout'); } catch {}
+    showLogin();
+  };
+
+  $('#btn-bypass').onclick = async () => {
+    const next = !(state.overview?.global_bypass);
+    try {
+      await api('POST', '/api/bypass', { global_bypass: next });
+      state.overview.global_bypass = next;
+      state.policy.global_bypass = next;
+      renderSidebar();
+      toast(next ? '已开启全局旁路' : '已恢复规则防护');
+    } catch (err) { toast(err.message, true); }
+  };
+
+  $('#proto-search').oninput = () => renderProtocols();
+
+  $('#btn-import-anti-bl').onclick = async () => {
+    try {
+      state.policy = await api('POST', '/api/presets/anti_blacklist/apply');
+      state.dirtyPolicy = false;
+      state.dirtyPorts = false;
+      renderAll();
+      toast('已导入防招黑推荐策略，可随时修改');
+    } catch (err) { toast(err.message, true); }
+  };
+
+  $('#btn-clear-policy').onclick = async () => {
+    if (!state.policy) return;
+    for (const p of state.policy.protocols) p.enabled = false;
+    state.policy.port_rules = [];
+    state.policy.abuse = {
+      ...state.policy.abuse,
+      max_conns_per_tenant: 0,
+      new_conn_rate_per_sec: 0,
+      udp_pps_limit_per_tenant: 0,
+      auto_quarantine_enabled: false,
+    };
+    state.policy.active_preset = 'custom';
+    try { await savePolicy('已清空全部拦截规则'); } catch (err) { toast(err.message, true); }
+  };
+
+  $('#btn-save-policy').onclick = async () => { try { await savePolicy(); } catch (err) { toast(err.message, true); } };
+  $('#btn-save-ports').onclick = async () => { try { await savePolicy('端口与流控已保存'); } catch (err) { toast(err.message, true); } };
+
+  // Port Templates
+  $('#btn-port-tpl').onclick = (e) => { e.stopPropagation(); $('#port-tpl-menu').classList.toggle('hidden'); };
+  document.addEventListener('click', () => $('#port-tpl-menu').classList.add('hidden'));
+  $('#port-tpl-menu').querySelectorAll('button').forEach(btn => btn.onclick = () => {
+    $('#port-tpl-menu').classList.add('hidden');
+    if (!state.policy.port_rules) state.policy.port_rules = [];
+    const add = (r) => state.policy.port_rules.push({ ...emptyPortRule(), ...r });
+    if (btn.dataset.tpl === 'smtp') {
+      [25, 465, 587].forEach(port => add({ name: `禁止出站 SMTP ${port}`, priority: 100, direction: 'out', l4_proto: 'tcp', port_start: port, port_end: port }));
+    } else if (btn.dataset.tpl === 'bt') {
+      add({ name: '禁止 BT 常用端口段', priority: 90, direction: 'both', l4_proto: 'both', port_start: 6881, port_end: 6889 });
+    } else if (btn.dataset.tpl === 'telnet') {
+      [21, 23, 445].forEach(port => add({ name: `禁止高危端口 ${port}`, priority: 95, direction: 'both', l4_proto: 'tcp', port_start: port, port_end: port }));
+    }
+    state.selectedPortIdx = state.policy.port_rules.length - 1;
+    state.draftPort = structuredClone(state.policy.port_rules[state.selectedPortIdx]);
+    state.dirtyPorts = true;
+    renderPorts();
+    renderPortInspector();
+    syncSaveButtons();
+  });
+
+  $('#btn-new-port').onclick = () => {
+    state.selectedPortIdx = -1;
+    state.draftPort = emptyPortRule();
+    renderPorts();
+    renderPortInspector();
+  };
+
+  // Abuse Limits live binding
+  const bindAbuseNum = (id, key, def) => $(id).oninput = (e) => {
+    state.policy.abuse[key] = parseInt(e.target.value, 10) || def;
+    state.dirtyPorts = true;
+    syncSaveButtons();
+  };
+  bindAbuseNum('#ab-conns', 'max_conns_per_tenant', 0);
+  bindAbuseNum('#ab-rate', 'new_conn_rate_per_sec', 0);
+  bindAbuseNum('#ab-pps', 'udp_pps_limit_per_tenant', 0);
+  bindAbuseNum('#ab-thresh', 'quarantine_threshold', 10);
+  bindAbuseNum('#ab-win', 'quarantine_window_sec', 300);
+  bindAbuseNum('#ab-dur', 'quarantine_duration_sec', 600);
+  $('#ab-flush').onclick = () => { state.policy.abuse.flush_conntrack_on_block = !state.policy.abuse.flush_conntrack_on_block; state.dirtyPorts = true; renderLimits(); syncSaveButtons(); };
+  $('#ab-autoban').onclick = () => { state.policy.abuse.auto_quarantine_enabled = !state.policy.abuse.auto_quarantine_enabled; state.dirtyPorts = true; renderLimits(); syncSaveButtons(); };
+
+  $('#btn-ban-add').onclick = async () => {
+    const ip = $('#ban-ip').value.trim();
+    const reason = $('#ban-reason').value.trim() || '管理员手动隔离';
+    const dur = parseInt($('#ban-dur').value, 10) || 1800;
+    try {
+      await api('POST', '/api/quarantine/ban', { tenant_ip: ip, reason, duration_sec: dur });
+      $('#ban-ip').value = '';
+      $('#ban-reason').value = '';
+      toast(`已隔离 ${ip}`);
+      await refreshTelemetry();
+    } catch (err) { toast(err.message, true); }
+  };
+
+  // Logs toolbar
+  $('#log-search').oninput = (e) => { state.logFilter.q = e.target.value; renderLogs(); };
+  $('#log-tenant-chip').onclick = () => { state.logFilter.tenant = ''; renderInstances(); renderLogs(); };
+  $('#log-action-seg').querySelectorAll('button').forEach(b => b.onclick = () => {
+    $('#log-action-seg').querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+    state.logFilter.action = b.dataset.act;
+    renderLogs();
+  });
+  $('#log-proto').onchange = (e) => { state.logFilter.proto = e.target.value; renderLogs(); };
+  $('#btn-log-pause').onclick = () => {
+    state.logPaused = !state.logPaused;
+    $('#btn-log-pause').textContent = state.logPaused ? '恢复流' : '暂停流';
+  };
+  $('#btn-log-clear').onclick = () => { state.logs = []; renderLogs(); };
+
+  // System actions
+  $('#btn-save-trusted').onclick = async () => {
+    state.policy.trusted_tenants = splitCSV($('#sys-trusted').value);
+    try { await savePolicy('白名单已保存'); } catch (err) { toast(err.message, true); }
+  };
+  $('#btn-geo-dl').onclick = async () => {
+    const b = $('#btn-geo-dl');
+    b.disabled = true; b.textContent = '下载中...';
+    try {
+      await api('POST', '/api/geo/download');
+      await refreshTelemetry();
+      renderSystem();
+      toast('Geo 规则库更新完成');
+    } catch (err) { toast(err.message, true); }
+    finally { b.disabled = false; b.textContent = '立即更新'; }
+  };
+  $('#sys-import-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const obj = JSON.parse(await file.text());
+      state.policy = await api('POST', '/api/policy/import', obj);
+      renderAll();
+      toast('策略已导入并生效');
+    } catch (err) { toast(err.message, true); }
+  };
+  $('#sys-alert-blk').onclick = () => { state.policy.notify.alert_on_block = !state.policy.notify.alert_on_block; renderSystem(); };
+  $('#sys-alert-ban').onclick = () => { state.policy.notify.alert_on_ban = !state.policy.notify.alert_on_ban; renderSystem(); };
+  $('#btn-save-notify').onclick = async () => {
+    state.policy.notify.webhook_url = $('#sys-webhook').value.trim();
+    state.policy.notify.telegram_token = $('#sys-tg-token').value.trim();
+    state.policy.notify.telegram_chat_id = $('#sys-tg-chat').value.trim();
+    state.policy.notify.min_interval_sec = parseInt($('#sys-notify-cd').value, 10) || 60;
+    try { await savePolicy('告警通知已保存'); } catch (err) { toast(err.message, true); }
+  };
+  $('#btn-notify-test').onclick = async () => {
+    try { await api('POST', '/api/notify/test'); toast('测试通知已发出'); } catch (err) { toast(err.message, true); }
+  };
+  $('#btn-save-pwd').onclick = async () => {
+    const pw = $('#sys-pwd').value;
+    try {
+      await api('POST', '/api/settings/password', { password: pw });
+      $('#sys-pwd').value = '';
+      toast('密码已更新');
+    } catch (err) { toast(err.message, true); }
+  };
+
+  enterApp().catch(() => {});
 })();
 </script>
 </body>

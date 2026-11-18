@@ -10,9 +10,9 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"natgfw/internal/config"
-	"natgfw/internal/engine"
-	"natgfw/internal/store"
+	"snapgfw/internal/config"
+	"snapgfw/internal/engine"
+	"snapgfw/internal/store"
 )
 
 func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
@@ -55,8 +55,13 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 		t.Fatal("expected session cookie")
 	}
 
-	// 3. State change without X-Natgfw CSRF header must fail with 403
-	req := httptest.NewRequest(http.MethodPost, "/api/presets/strict_block/apply", nil)
+	// Default initial policy must be empty (custom, all disabled)
+	if ps.Get().ActivePreset != "custom" || len(ps.Get().PortRules) != 0 {
+		t.Fatalf("expected empty initial policy, got preset=%s ports=%d", ps.Get().ActivePreset, len(ps.Get().PortRules))
+	}
+
+	// 3. State change without X-Snapgfw CSRF header must fail with 403
+	req := httptest.NewRequest(http.MethodPost, "/api/presets/anti_blacklist/apply", nil)
 	req.AddCookie(cookies[0])
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -64,13 +69,49 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 		t.Fatalf("expected 403 without CSRF header, got %d", rec.Code)
 	}
 
-	// 4. With X-Natgfw header, preset applies cleanly
-	req = httptest.NewRequest(http.MethodPost, "/api/presets/strict_block/apply", nil)
+	// 4. With X-Snapgfw header, recommended anti_blacklist preset applies cleanly
+	req = httptest.NewRequest(http.MethodPost, "/api/presets/anti_blacklist/apply", nil)
 	req.AddCookie(cookies[0])
-	req.Header.Set("X-Natgfw", "1")
+	req.Header.Set("X-Snapgfw", "1")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || ps.Get().ActivePreset != "strict_block" {
+	if rec.Code != http.StatusOK || ps.Get().ActivePreset != "anti_blacklist" {
 		t.Fatalf("preset apply failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 5. After importing preset, user can freely edit and save custom modifications
+	edited := ps.Get()
+	edited.ActivePreset = "custom"
+	edited.Protocols[0].Enabled = false
+	putBody, _ := json.Marshal(edited)
+	req = httptest.NewRequest(http.MethodPut, "/api/policy", bytes.NewReader(putBody))
+	req.AddCookie(cookies[0])
+	req.Header.Set("X-Snapgfw", "1")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || ps.Get().Protocols[0].Enabled {
+		t.Fatalf("custom edit after preset import failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 6. Verify /api/presets exposes only anti_blacklist
+	req = httptest.NewRequest(http.MethodGet, "/api/presets", nil)
+	req.AddCookie(cookies[0])
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 presets, got %d", rec.Code)
+	}
+	var presets []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &presets); err != nil || len(presets) != 1 || presets[0].ID != "anti_blacklist" {
+		t.Fatalf("expected single preset anti_blacklist, got %s", rec.Body.String())
+	}
+
+	// 7. Verify GET / renders SnapGFW Web UI
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("SnapGFW")) || !bytes.Contains(rec.Body.Bytes(), []byte("导入推荐 · 防招黑")) {
+		t.Fatalf("unexpected UI response: code=%d", rec.Code)
 	}
 }

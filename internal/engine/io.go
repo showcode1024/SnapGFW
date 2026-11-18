@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 
-	"natgfw/internal/proto"
+	"snapgfw/internal/proto"
 )
 
 // Verdict represents the NFQUEUE decision for a packet/stream.

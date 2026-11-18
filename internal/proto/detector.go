@@ -3,8 +3,8 @@ package proto
 import (
 	"net"
 
-	"natgfw/internal/geo"
-	"natgfw/internal/model"
+	"snapgfw/internal/geo"
+	"snapgfw/internal/model"
 )
 
 // Direction aliases model.Direction.

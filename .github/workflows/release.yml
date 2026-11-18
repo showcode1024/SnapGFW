@@ -21,16 +21,16 @@ jobs:
       - name: Build binaries
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o dist/natgfw-linux-amd64 ./cmd/natgfw
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o dist/natgfw-linux-arm64 ./cmd/natgfw
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o dist/snapgfw-linux-amd64 ./cmd/snapgfw
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o dist/snapgfw-linux-arm64 ./cmd/snapgfw
           cp install.sh dist/install.sh
-          (cd dist && sha256sum natgfw-linux-amd64 natgfw-linux-arm64 > SHA256SUMS)
+          (cd dist && sha256sum snapgfw-linux-amd64 snapgfw-linux-arm64 > SHA256SUMS)
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/natgfw-linux-amd64
-            dist/natgfw-linux-arm64
+            dist/snapgfw-linux-amd64
+            dist/snapgfw-linux-arm64
             dist/SHA256SUMS
             dist/install.sh
           generate_release_notes: true

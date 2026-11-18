@@ -33,7 +33,7 @@ func ApplyNFT(script string) error {
 	return nil
 }
 
-// DeleteTable removes the natgfw nftables table cleanly on shutdown.
+// DeleteTable removes the snapgfw nftables table cleanly on shutdown.
 func DeleteTable(tableName string) error {
 	cmd := exec.Command("nft", "delete", "table", "inet", tableName)
 	var stderr bytes.Buffer

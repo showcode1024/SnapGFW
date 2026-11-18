@@ -13,11 +13,11 @@ import (
 	"github.com/mdlayher/netlink"
 	"golang.org/x/sys/unix"
 
-	"natgfw/internal/proto"
+	"snapgfw/internal/proto"
 )
 
 // NFQueueSource opens 4 Linux NFQUEUE queues (QueueBase..QueueBase+3) matching
-// the 4 unambiguous (flow_direction, packet_direction) combinations in inet natgfw.
+// the 4 unambiguous (flow_direction, packet_direction) combinations in inet snapgfw.
 type NFQueueSource struct {
 	queueBase      uint16
 	queueLen       uint32

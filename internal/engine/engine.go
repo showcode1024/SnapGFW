@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"natgfw/internal/config"
-	"natgfw/internal/model"
-	"natgfw/internal/proto"
-	"natgfw/internal/runman"
-	"natgfw/internal/store"
+	"snapgfw/internal/config"
+	"snapgfw/internal/model"
+	"snapgfw/internal/proto"
+	"snapgfw/internal/runman"
+	"snapgfw/internal/store"
 )
 
 // Stats holds lock-free engine telemetry exposed in the Web UI.
@@ -157,25 +157,35 @@ type streamEntry struct {
 	lruElem  *list.Element
 }
 
+type logDedupeKey struct {
+	tenant   string
+	protocol string
+	action   string
+}
+
 type worker struct {
-	id         int
-	engine     *Engine
-	ch         chan PacketEvent
-	streams    map[uint32]*streamEntry
-	lru        *list.List
-	maxPending int
-	idleTTL    time.Duration
+	id          int
+	engine      *Engine
+	ch          chan PacketEvent
+	streams     map[uint32]*streamEntry
+	lru         *list.List
+	maxPending  int
+	idleTTL     time.Duration
+	burstWindow time.Duration
+	logDedupe   map[logDedupeKey]time.Time
 }
 
 func newWorker(id int, eng *Engine) *worker {
 	return &worker{
-		id:         id,
-		engine:     eng,
-		ch:         make(chan PacketEvent, eng.cfg.WorkerQueueSize),
-		streams:    make(map[uint32]*streamEntry, 256),
-		lru:        list.New(),
-		maxPending: eng.cfg.MaxPendingPerWkr,
-		idleTTL:    time.Duration(eng.cfg.StreamIdleSec) * time.Second,
+		id:          id,
+		engine:      eng,
+		ch:          make(chan PacketEvent, eng.cfg.WorkerQueueSize),
+		streams:     make(map[uint32]*streamEntry, 128),
+		lru:         list.New(),
+		maxPending:  eng.cfg.MaxPendingPerWkr,
+		idleTTL:     time.Duration(eng.cfg.StreamIdleSec) * time.Second,
+		burstWindow: time.Duration(eng.cfg.AuditBurstSec) * time.Second,
+		logDedupe:   make(map[logDedupeKey]time.Time, 32),
 	}
 }
 
@@ -202,13 +212,21 @@ func (w *worker) reapIdle(now time.Time) {
 	for {
 		back := w.lru.Back()
 		if back == nil {
-			return
+			break
 		}
 		ent := back.Value.(*streamEntry)
 		if ent.lastSeen.After(cutoff) {
-			return // LRU is ordered by recency
+			break // LRU is ordered by recency
 		}
 		w.removeEntry(ent)
+	}
+	if w.burstWindow > 0 && len(w.logDedupe) > 0 {
+		expireAt := now.Add(-w.burstWindow * 2)
+		for k, ts := range w.logDedupe {
+			if ts.Before(expireAt) {
+				delete(w.logDedupe, k)
+			}
+		}
 	}
 }
 
@@ -261,7 +279,7 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 			w.engine.offloadedAccept.Add(1)
 			return VerdictAcceptStream
 		}
-		// Mid-stream TCP packet without SYN (e.g., pre-existing SSH/HTTPS session before natgfw started):
+		// Mid-stream TCP packet without SYN (e.g., pre-existing SSH/HTTPS session before SnapGFW started):
 		// avoid false-triggering FET on mid-stream ciphertext; offload cleanly.
 		if pkt.L4Proto == 6 && (pkt.TCPFlags&TCPFlagSYN == 0) {
 			if len(pkt.Payload) == 0 && (pkt.TCPFlags&(TCPFlagFIN|TCPFlagRST)) == 0 {
@@ -371,9 +389,11 @@ func (w *worker) recordEvents(pol model.Policy, meta proto.FlowMeta, events []pr
 		}
 	}
 
+	now := time.Now()
 	for _, ev := range events {
 		if w.engine.audit != nil {
-			w.engine.audit.Record(store.AuditEvent{
+			auditEv := store.AuditEvent{
+				Timestamp:  now,
 				TenantIP:   tenantStr,
 				InstanceID: instID,
 				Hostname:   hostname,
@@ -386,7 +406,24 @@ func (w *worker) recordEvents(pol model.Policy, meta proto.FlowMeta, events []pr
 				Protocol:   string(ev.Protocol),
 				Action:     string(ev.Action),
 				Detail:     ev.Detail,
-			})
+			}
+			key := logDedupeKey{tenant: tenantStr, protocol: string(ev.Protocol), action: string(ev.Action)}
+			throttled := false
+			if w.burstWindow > 0 {
+				if prev, ok := w.logDedupe[key]; ok && now.Sub(prev) < w.burstWindow {
+					throttled = true
+				} else {
+					if len(w.logDedupe) >= 256 {
+						clear(w.logDedupe)
+					}
+					w.logDedupe[key] = now
+				}
+			}
+			if throttled {
+				w.engine.audit.RecordCountOnly(auditEv)
+			} else {
+				w.engine.audit.Record(auditEv)
+			}
 		}
 		if ev.Action == model.ActionBlock && w.engine.quarantine != nil {
 			w.engine.quarantine.RecordBlock(pol, tenantStr, instID, hostname, string(ev.Protocol)+" "+ev.Detail)

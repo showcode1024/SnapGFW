@@ -30,6 +30,9 @@ type Config struct {
 	TCPPrefixLimit   int    `json:"tcp_prefix_limit"`
 	UDPMaxPackets    int    `json:"udp_max_packets"`
 	StreamIdleSec    int    `json:"stream_idle_sec"`
+	AuditRingCap     int    `json:"audit_ring_cap"`
+	AuditMaxFileMB   int    `json:"audit_max_file_mb"`
+	AuditBurstSec    int    `json:"audit_burst_sec"`
 	GeoSitePath      string `json:"geosite_path"`
 	GeoIPPath        string `json:"geoip_path"`
 	LowMemMode       bool   `json:"low_mem_mode"`
@@ -40,10 +43,10 @@ func Default() Config {
 	return Config{
 		ListenAddr:       "0.0.0.0:9090",
 		AdminUser:        "admin",
-		DataDir:          "/var/lib/natgfw",
+		DataDir:          "/var/lib/snapgfw",
 		RunmanDataDir:    "/var/lib/runman-agent",
 		BridgeIface:      "rmbr0",
-		NftTable:         "natgfw",
+		NftTable:         "snapgfw",
 		QueueBase:        200,
 		ConnMarkAccept:   2001,
 		ConnMarkDrop:     2002,
@@ -55,8 +58,11 @@ func Default() Config {
 		TCPPrefixLimit:   16 * 1024,
 		UDPMaxPackets:    6,
 		StreamIdleSec:    20,
-		GeoSitePath:      "/var/lib/natgfw/geosite.dat",
-		GeoIPPath:        "/var/lib/natgfw/geoip.dat",
+		AuditRingCap:     200,
+		AuditMaxFileMB:   2, // 2 MiB active + 2 MiB rotated backup = <= 4 MiB disk ceiling
+		AuditBurstSec:    3, // Deduplicate repetitive flood events per tenant/protocol every 3s
+		GeoSitePath:      "/var/lib/snapgfw/geosite.dat",
+		GeoIPPath:        "/var/lib/snapgfw/geoip.dat",
 		LowMemMode:       false,
 	}
 }
@@ -115,6 +121,17 @@ func (c *Config) Normalize() {
 	if c.StreamIdleSec <= 0 {
 		c.StreamIdleSec = def.StreamIdleSec
 	}
+	if c.AuditRingCap <= 0 {
+		c.AuditRingCap = def.AuditRingCap
+	}
+	if c.AuditMaxFileMB < 0 {
+		c.AuditMaxFileMB = 0
+	} else if c.AuditMaxFileMB == 0 {
+		c.AuditMaxFileMB = def.AuditMaxFileMB
+	}
+	if c.AuditBurstSec <= 0 {
+		c.AuditBurstSec = def.AuditBurstSec
+	}
 	if strings.TrimSpace(c.GeoSitePath) == "" {
 		c.GeoSitePath = filepath.Join(c.DataDir, "geosite.dat")
 	}
@@ -128,6 +145,8 @@ func (c *Config) Normalize() {
 		c.SocketRcvBuf = min(c.SocketRcvBuf, 2*1024*1024)
 		c.MaxPendingPerWkr = min(c.MaxPendingPerWkr, 512)
 		c.TCPPrefixLimit = min(c.TCPPrefixLimit, 8192)
+		c.AuditRingCap = min(c.AuditRingCap, 100)
+		c.AuditMaxFileMB = min(c.AuditMaxFileMB, 1)
 	}
 }
 

@@ -1,4 +1,4 @@
-module natgfw
+module snapgfw
 
 go 1.24
 

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"natgfw/internal/model"
+	"snapgfw/internal/model"
 )
 
 // PolicyStore manages atomic JSON persistence and synchronized updates for Policy.
@@ -18,7 +18,7 @@ type PolicyStore struct {
 	onChange []func(model.Policy) error
 }
 
-// NewPolicyStore loads policy.json or initializes it with the "anti_blacklist" preset.
+// NewPolicyStore loads policy.json or initializes an empty passthrough baseline policy.
 func NewPolicyStore(path string) (*PolicyStore, error) {
 	ps := &PolicyStore{path: path}
 	data, err := os.ReadFile(path)
@@ -26,7 +26,7 @@ func NewPolicyStore(path string) (*PolicyStore, error) {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		def := model.BuildPreset("anti_blacklist")
+		def := model.DefaultPolicy()
 		ps.policy = def
 		if err := ps.saveLocked(def); err != nil {
 			return nil, err
@@ -96,9 +96,12 @@ func (s *PolicyStore) Update(next model.Policy) error {
 	return nil
 }
 
-// ApplyPreset replaces active rules with the named built-in preset (preserving Notify settings if desired).
+// ApplyPreset imports a built-in recommended preset into the editable policy (preserving Notify and TrustedTenants).
 func (s *PolicyStore) ApplyPreset(presetID string, preserveNotify bool) (model.Policy, error) {
-	next := model.BuildPreset(presetID)
+	next, err := model.LookupPreset(presetID)
+	if err != nil {
+		return model.Policy{}, err
+	}
 	if preserveNotify {
 		cur := s.Get()
 		next.Notify = cur.Notify

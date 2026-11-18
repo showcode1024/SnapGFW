@@ -41,8 +41,15 @@ type TenantStats struct {
 	ByProtocol   map[string]int `json:"by_protocol"`
 }
 
-// AuditStore maintains a bounded in-memory ring buffer, rotating JSONL file,
-// per-tenant statistics, and live SSE subscribers.
+const (
+	defaultRingCap    = 200
+	defaultMaxFileSz  = 2 * 1024 * 1024 // 2 MiB active + 1 rotated backup = <= 4 MiB ROM
+	maxDetailBytes    = 128
+	maxTenantStatsCap = 512
+)
+
+// AuditStore maintains a tiny bounded in-memory ring buffer, size-capped JSONL file,
+// per-tenant counters, and live SSE subscribers.
 type AuditStore struct {
 	logPath    string
 	maxFileSz  int64
@@ -60,24 +67,25 @@ type AuditStore struct {
 	fileSize   int64
 }
 
-// NewAuditStore initializes an AuditStore with bounded ring buffer and optional JSONL persistence.
+// NewAuditStore initializes an AuditStore with bounded ring buffer and size-capped JSONL persistence.
+// Passing maxFileBytes == 0 disables disk logging completely; < 0 uses the 2 MiB default.
 func NewAuditStore(logPath string, ringCap int, maxFileBytes int64) (*AuditStore, error) {
 	if ringCap <= 0 {
-		ringCap = 2000
+		ringCap = defaultRingCap
 	}
-	if maxFileBytes <= 0 {
-		maxFileBytes = 20 * 1024 * 1024 // 20 MB per file, keep 1 rotated backup
+	if maxFileBytes < 0 {
+		maxFileBytes = defaultMaxFileSz
 	}
 	as := &AuditStore{
 		logPath:   logPath,
 		maxFileSz: maxFileBytes,
 		ringCap:   ringCap,
-		ring:      make([]AuditEvent, 0, min(ringCap, 256)),
+		ring:      make([]AuditEvent, 0, min(ringCap, 64)),
 		byTenant:  make(map[string]*TenantStats),
 		byProto:   make(map[string]int64),
 		subs:      make(map[chan AuditEvent]struct{}),
 	}
-	if logPath != "" {
+	if logPath != "" && maxFileBytes > 0 {
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 			return nil, err
 		}
@@ -94,6 +102,27 @@ func NewAuditStore(logPath string, ringCap int, maxFileBytes int64) (*AuditStore
 	return as, nil
 }
 
+// RingCap returns the configured in-memory event buffer cap.
+func (a *AuditStore) RingCap() int { return a.ringCap }
+
+// MaxDiskBytes returns the maximum combined bytes used on disk (active + 1 backup).
+func (a *AuditStore) MaxDiskBytes() int64 {
+	if a.file == nil && a.logPath == "" {
+		return 0
+	}
+	if a.maxFileSz <= 0 {
+		return 0
+	}
+	return a.maxFileSz * 2
+}
+
+func truncateDetail(s string) string {
+	if len(s) <= maxDetailBytes {
+		return s
+	}
+	return s[:maxDetailBytes]
+}
+
 func (a *AuditStore) loadRecentFromDisk() {
 	f, err := os.Open(a.logPath)
 	if err != nil {
@@ -101,11 +130,12 @@ func (a *AuditStore) loadRecentFromDisk() {
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 16*1024), 256*1024)
+	sc.Buffer(make([]byte, 0, 4*1024), 16*1024)
 	for sc.Scan() {
 		var ev AuditEvent
 		if json.Unmarshal(sc.Bytes(), &ev) == nil {
-			a.appendLocked(ev, false)
+			ev.Detail = truncateDetail(ev.Detail)
+			a.appendLocked(ev, false, true)
 			if ev.ID > a.nextID.Load() {
 				a.nextID.Store(ev.ID)
 			}
@@ -125,15 +155,16 @@ func (a *AuditStore) Close() error {
 	return nil
 }
 
-// Record stores an audit event, updates counters, persists to JSONL, and fans out to SSE listeners.
+// Record stores an audit event, updates counters, persists to capped JSONL, and fans out to SSE listeners.
 func (a *AuditStore) Record(ev AuditEvent) AuditEvent {
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now()
 	}
 	ev.ID = a.nextID.Add(1)
+	ev.Detail = truncateDetail(ev.Detail)
 
 	a.mu.Lock()
-	a.appendLocked(ev, true)
+	a.appendLocked(ev, true, true)
 	a.mu.Unlock()
 
 	a.subsMu.Lock()
@@ -147,12 +178,25 @@ func (a *AuditStore) Record(ev AuditEvent) AuditEvent {
 	return ev
 }
 
-func (a *AuditStore) appendLocked(ev AuditEvent, writeDisk bool) {
-	if len(a.ring) >= a.ringCap {
-		copy(a.ring, a.ring[1:])
-		a.ring[len(a.ring)-1] = ev
-	} else {
-		a.ring = append(a.ring, ev)
+// RecordCountOnly increments aggregate counters for burst-throttled duplicate events
+// without allocating ring entries, writing to disk, or flooding SSE clients.
+func (a *AuditStore) RecordCountOnly(ev AuditEvent) {
+	if ev.Timestamp.IsZero() {
+		ev.Timestamp = time.Now()
+	}
+	a.mu.Lock()
+	a.appendLocked(ev, false, false)
+	a.mu.Unlock()
+}
+
+func (a *AuditStore) appendLocked(ev AuditEvent, writeDisk bool, storeRing bool) {
+	if storeRing {
+		if len(a.ring) >= a.ringCap {
+			copy(a.ring, a.ring[1:])
+			a.ring[len(a.ring)-1] = ev
+		} else {
+			a.ring = append(a.ring, ev)
+		}
 	}
 
 	if ev.Action == "block" || ev.Action == "quarantine" {
@@ -165,6 +209,9 @@ func (a *AuditStore) appendLocked(ev AuditEvent, writeDisk bool) {
 	if ev.TenantIP != "" {
 		ts := a.byTenant[ev.TenantIP]
 		if ts == nil {
+			if len(a.byTenant) >= maxTenantStatsCap {
+				a.evictOldestTenantLocked()
+			}
 			ts = &TenantStats{
 				TenantIP:   ev.TenantIP,
 				ByProtocol: make(map[string]int),
@@ -187,7 +234,7 @@ func (a *AuditStore) appendLocked(ev AuditEvent, writeDisk bool) {
 		ts.ByProtocol[ev.Protocol]++
 	}
 
-	if writeDisk && a.file != nil {
+	if writeDisk && a.file != nil && a.maxFileSz > 0 {
 		line, err := json.Marshal(ev)
 		if err == nil {
 			line = append(line, '\n')
@@ -204,6 +251,20 @@ func (a *AuditStore) appendLocked(ev AuditEvent, writeDisk bool) {
 				}
 			}
 		}
+	}
+}
+
+func (a *AuditStore) evictOldestTenantLocked() {
+	var oldestKey string
+	var oldestTime time.Time
+	for k, v := range a.byTenant {
+		if oldestKey == "" || v.LastSeen.Before(oldestTime) {
+			oldestKey = k
+			oldestTime = v.LastSeen
+		}
+	}
+	if oldestKey != "" {
+		delete(a.byTenant, oldestKey)
 	}
 }
 
@@ -270,7 +331,7 @@ func (a *AuditStore) Totals() (blocks, logs int64, byProto map[string]int64) {
 
 // Subscribe registers a non-blocking channel for live SSE audit events.
 func (a *AuditStore) Subscribe() (<-chan AuditEvent, func()) {
-	ch := make(chan AuditEvent, 64)
+	ch := make(chan AuditEvent, 16)
 	a.subsMu.Lock()
 	a.subs[ch] = struct{}{}
 	a.subsMu.Unlock()

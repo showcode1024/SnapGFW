@@ -1,6 +1,8 @@
 package model
 
-// PresetInfo describes a selectable one-click policy template in the panel.
+import "fmt"
+
+// PresetInfo describes a selectable policy template available for optional import.
 type PresetInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -8,29 +10,14 @@ type PresetInfo struct {
 	Recommended bool   `json:"recommended,omitempty"`
 }
 
-// ListPresets returns available built-in one-click strategy presets.
+// ListPresets returns the recommended built-in template available for one-click import.
 func ListPresets() []PresetInfo {
 	return []PresetInfo{
 		{
 			ID:          "anti_blacklist",
-			Name:        "防招黑模式（NAT VPS 推荐）",
-			Summary:     "入站阻断 SS/SS-2022/VMess-TCP、SOCKS、HTTP 代理、高熵 WS、OpenVPN 及国内 SNI 伪装(TLS+QUIC)，出站封禁 SMTP 发信；放行海外正常 SNI 的 HTTPS / Reality 与正常业务。",
+			Name:        "防招黑",
+			Summary:     "入站阻断 SS/SS-2022/VMess-TCP、SOCKS、HTTP 代理、高熵 WS、OpenVPN 及国内 SNI 伪装，出站封禁 SMTP 发信；导入后可自由增删修改。",
 			Recommended: true,
-		},
-		{
-			ID:      "strict_block",
-			Name:    "严格全封代理模式（建站/纯业务）",
-			Summary: "除常规建站 HTTPS/HTTP/SSH/DNS 外，拦截全部可识别代理与 VPN 协议（含 WireGuard、UDP 全加密、Trojan 启发式、ECH、BT/P2P）与非标准端口转发。",
-		},
-		{
-			ID:      "audit_only",
-			Name:    "纯审计观察模式（Dry-Run 零阻断）",
-			Summary: "开启全部协议检测器但动作全部设为仅记录告警日志，不阻断任何流量，适合上线初期摸底租户行为。",
-		},
-		{
-			ID:      "anti_abuse",
-			Name:    "防滥用与版权加固模式",
-			Summary: "在防招黑基础上增加：拦截 BitTorrent/DHT P2P、启用单实例并发连接限制、新建速率限制、UDP PPS 限速及多次违规自动临时隔离。",
 		},
 	}
 }
@@ -185,39 +172,46 @@ func BaseProtocolCatalog() []ProtocolRule {
 	}
 }
 
-// BuildPreset builds a complete Policy from a named preset template.
-func BuildPreset(presetID string) Policy {
+// DefaultPolicy returns a clean baseline policy with zero active blocks or limits.
+func DefaultPolicy() Policy {
 	protos := BaseProtocolCatalog()
-	setProto := func(id ProtocolID, enabled bool, action Action, dir Direction, fn func(*ProtocolRule)) {
-		for i := range protos {
-			if protos[i].ID == id {
-				protos[i].Enabled = enabled
-				protos[i].Action = action
-				protos[i].Direction = dir
-				if fn != nil {
-					fn(&protos[i])
-				}
-				return
-			}
-		}
+	for i := range protos {
+		protos[i].Enabled = false
 	}
+	return Policy{
+		Version:      1,
+		ActivePreset: "custom",
+		Protocols:    protos,
+		Abuse: AbuseConfig{
+			QuarantineThreshold:   10,
+			QuarantineWindowSec:   300,
+			QuarantineDurationSec: 600,
+			FlushConntrackOnBlock: true,
+		},
+		Notify: NotifyConfig{MinIntervalSec: 60},
+	}
+}
 
-	smtpRule := PortRule{
-		ID:        "preset-block-smtp-out",
-		Name:      "禁止出站 SMTP 发信 (防垃圾邮件)",
-		Enabled:   true,
-		Priority:  100,
-		Direction: DirOutbound,
-		Scope:     PortScopeDst,
-		L4Proto:   "tcp",
-		PortStart: 25,
-		PortEnd:   25,
-		PeerType:  "any",
-		Action:    ActionBlock,
-		Comment:   "25 端口高危发信",
+// LookupPreset builds an editable Policy from a supported preset ID.
+func LookupPreset(presetID string) (Policy, error) {
+	if presetID != "anti_blacklist" {
+		return Policy{}, fmt.Errorf("unknown preset %q (available: anti_blacklist)", presetID)
 	}
+	protos := BaseProtocolCatalog()
 	smtpsRules := []PortRule{
-		smtpRule,
+		{
+			ID:        "preset-block-smtp-out",
+			Name:      "禁止出站 SMTP 25",
+			Enabled:   true,
+			Priority:  100,
+			Direction: DirOutbound,
+			Scope:     PortScopeDst,
+			L4Proto:   "tcp",
+			PortStart: 25,
+			PortEnd:   25,
+			PeerType:  "any",
+			Action:    ActionBlock,
+		},
 		{
 			ID:        "preset-block-smtps-465",
 			Name:      "禁止出站 SMTPS 465",
@@ -245,105 +239,30 @@ func BuildPreset(presetID string) Policy {
 			Action:    ActionBlock,
 		},
 	}
+	return Policy{
+		Version:      1,
+		ActivePreset: "anti_blacklist",
+		Protocols:    protos,
+		PortRules:    smtpsRules,
+		Abuse: AbuseConfig{
+			MaxConnsPerTenant:     4096,
+			NewConnRatePerSec:     300,
+			UDPPPSLimitPerTenant:  5000,
+			AutoQuarantineEnabled: false,
+			QuarantineThreshold:   10,
+			QuarantineWindowSec:   300,
+			QuarantineDurationSec: 600,
+			FlushConntrackOnBlock: true,
+		},
+		Notify: NotifyConfig{AlertOnBan: true, MinIntervalSec: 60},
+	}, nil
+}
 
-	switch presetID {
-	case "strict_block":
-		for i := range protos {
-			switch protos[i].ID {
-			case ProtoSSH, ProtoHTTPPlain, ProtoDNS:
-				protos[i].Enabled = false
-			case ProtoTLSAnomaly:
-				protos[i].Enabled = true
-				protos[i].Action = ActionBlock
-				protos[i].Direction = DirBoth
-				protos[i].Options = RuleOpts{BlockFakeObfs: true, BlockECH: true, BlockNoSNI: true}
-			default:
-				protos[i].Enabled = true
-				protos[i].Action = ActionBlock
-				protos[i].Direction = DirBoth
-				if protos[i].ID == ProtoWebSocket {
-					protos[i].WSMode = WSModeBlockAll
-				}
-			}
-		}
-		return Policy{
-			Version:      1,
-			ActivePreset: "strict_block",
-			Protocols:    protos,
-			PortRules:    smtpsRules,
-			Abuse: AbuseConfig{
-				MaxConnsPerTenant:     2048,
-				NewConnRatePerSec:     200,
-				UDPPPSLimitPerTenant:  3000,
-				AutoQuarantineEnabled: true,
-				QuarantineThreshold:   8,
-				QuarantineWindowSec:   300,
-				QuarantineDurationSec: 900,
-				FlushConntrackOnBlock: true,
-			},
-			Notify: NotifyConfig{AlertOnBan: true, MinIntervalSec: 60},
-		}
-
-	case "audit_only":
-		for i := range protos {
-			protos[i].Enabled = true
-			protos[i].Action = ActionLog
-			if protos[i].ID == ProtoWebSocket {
-				protos[i].WSMode = WSModeLogOnly
-			}
-		}
-		return Policy{
-			Version:      1,
-			ActivePreset: "audit_only",
-			Protocols:    protos,
-			PortRules:    nil,
-			Abuse: AbuseConfig{
-				AutoQuarantineEnabled: false,
-				QuarantineThreshold:   10,
-				QuarantineWindowSec:   300,
-				QuarantineDurationSec: 600,
-			},
-			Notify: NotifyConfig{MinIntervalSec: 60},
-		}
-
-	case "anti_abuse":
-		setProto(ProtoBitTorrent, true, ActionBlock, DirBoth, nil)
-		setProto(ProtoWireGuard, true, ActionBlock, DirBoth, nil)
-		return Policy{
-			Version:      1,
-			ActivePreset: "anti_abuse",
-			Protocols:    protos,
-			PortRules:    smtpsRules,
-			Abuse: AbuseConfig{
-				MaxConnsPerTenant:     3000,
-				NewConnRatePerSec:     250,
-				UDPPPSLimitPerTenant:  4000,
-				AutoQuarantineEnabled: true,
-				QuarantineThreshold:   6,
-				QuarantineWindowSec:   300,
-				QuarantineDurationSec: 900,
-				FlushConntrackOnBlock: true,
-			},
-			Notify: NotifyConfig{AlertOnBan: true, MinIntervalSec: 60},
-		}
-
-	default: // "anti_blacklist"
-		return Policy{
-			Version:      1,
-			ActivePreset: "anti_blacklist",
-			Protocols:    protos,
-			PortRules:    smtpsRules,
-			Abuse: AbuseConfig{
-				MaxConnsPerTenant:     4096,
-				NewConnRatePerSec:     300,
-				UDPPPSLimitPerTenant:  5000,
-				AutoQuarantineEnabled: false,
-				QuarantineThreshold:   10,
-				QuarantineWindowSec:   300,
-				QuarantineDurationSec: 600,
-				FlushConntrackOnBlock: true,
-			},
-			Notify: NotifyConfig{AlertOnBan: true, MinIntervalSec: 60},
-		}
+// BuildPreset builds the recommended anti_blacklist policy.
+func BuildPreset(presetID string) Policy {
+	pol, err := LookupPreset(presetID)
+	if err != nil {
+		return DefaultPolicy()
 	}
+	return pol
 }

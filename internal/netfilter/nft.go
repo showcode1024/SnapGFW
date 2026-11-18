@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"natgfw/internal/config"
-	"natgfw/internal/geo"
-	"natgfw/internal/model"
+	"snapgfw/internal/config"
+	"snapgfw/internal/geo"
+	"snapgfw/internal/model"
 )
 
 // RenderNFT generates the complete atomic nftables ruleset for `table inet <NftTable>`.
@@ -126,6 +126,12 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 	}
 
 	// 4. Conntrack offload & L7 DPI NFQUEUE dispatch (4 queues encode flow & packet direction unambiguously)
+	if !hasEnabledProtocol(pol) {
+		b.WriteString("    # no L7 protocol detectors enabled: skip NFQUEUE\n")
+		b.WriteString("  }\n}\n")
+		return b.String(), nil
+	}
+
 	fmt.Fprintf(&b, "    ct mark %d counter accept\n", cfg.ConnMarkAccept)
 	fmt.Fprintf(&b, "    ct mark %d counter drop\n", cfg.ConnMarkDrop)
 	b.WriteString("    meta l4proto != { tcp, udp } accept\n")
@@ -141,6 +147,15 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 
 	b.WriteString("  }\n}\n")
 	return b.String(), nil
+}
+
+func hasEnabledProtocol(pol model.Policy) bool {
+	for _, pr := range pol.Protocols {
+		if pr.Enabled && pr.Action != model.ActionAllow {
+			return true
+		}
+	}
+	return false
 }
 
 func renderPortRule(br string, r model.PortRule) ([]string, error) {

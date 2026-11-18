@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"natgfw/internal/model"
+	"snapgfw/internal/model"
 )
 
 // Decision is the stream-level verdict emitted by an evaluator session.

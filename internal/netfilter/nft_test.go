@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"natgfw/internal/config"
-	"natgfw/internal/model"
+	"snapgfw/internal/config"
+	"snapgfw/internal/model"
 )
 
 func TestRenderNFT_IsolationAndQueues(t *testing.T) {
@@ -39,7 +39,7 @@ func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 		t.Fatalf("RenderNFT failed: %v", err)
 	}
 	checks := []string{
-		`table inet natgfw`,
+		`table inet snapgfw`,
 		`type filter hook forward priority filter + 10`,
 		`iifname != "rmbr0" oifname != "rmbr0" accept`,
 		`ip saddr 10.91.0.2 meta l4proto tcp tcp dport 25 counter accept`,
@@ -61,5 +61,14 @@ func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 	idxBlock := strings.Index(script, `iifname "rmbr0" oifname != "rmbr0" ct direction original meta l4proto tcp tcp dport 25 counter drop`)
 	if idxAllow < 0 || idxBlock < 0 || idxAllow >= idxBlock {
 		t.Fatalf("expected priority 200 allow rule before priority 100 block rule")
+	}
+
+	// Empty default policy skips NFQUEUE dispatch completely for zero fastpath overhead
+	emptyScript, err := RenderNFT(cfg, model.DefaultPolicy())
+	if err != nil {
+		t.Fatalf("RenderNFT empty failed: %v", err)
+	}
+	if strings.Contains(emptyScript, "queue num") {
+		t.Fatalf("expected empty default policy to skip NFQUEUE rules:\n%s", emptyScript)
 	}
 }

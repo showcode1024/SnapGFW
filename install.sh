@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# natgfw installer / upgrader / uninstaller for KVM hosts (Debian / Ubuntu / RHEL family)
+# SnapGFW installer / upgrader / uninstaller for KVM hosts (Debian / Ubuntu / RHEL family)
 #
 # Examples:
-#   bash install.sh --from-bin ./natgfw-linux-amd64 --disable-rfw --with-geo
+#   bash install.sh --from-bin ./snapgfw-linux-amd64 --disable-rfw --with-geo
 #   bash install.sh --listen 127.0.0.1:9090 --bridge rmbr0 --low-mem
 #   bash install.sh --uninstall [--purge]
 set -euo pipefail
 
-BIN="/usr/local/bin/natgfw"
-CFG_DIR="/etc/natgfw"
+BIN="/usr/local/bin/snapgfw"
+CFG_DIR="/etc/snapgfw"
 CFG_FILE="${CFG_DIR}/config.json"
-DATA_DIR="/var/lib/natgfw"
-SERVICE_FILE="/etc/systemd/system/natgfw.service"
+DATA_DIR="/var/lib/snapgfw"
+SERVICE_FILE="/etc/systemd/system/snapgfw.service"
 
 LISTEN="0.0.0.0:9090"
 BRIDGE="rmbr0"
@@ -19,7 +19,7 @@ LOW_MEM=0
 DISABLE_RFW=0
 WITH_GEO=0
 FROM_BIN=""
-RELEASE_URL="${NATGFW_RELEASE_URL:-https://github.com/showcode1024/natgfw/releases/latest/download}"
+RELEASE_URL="${SNAPGFW_RELEASE_URL:-https://github.com/showcode1024/SnapGFW/releases/latest/download}"
 UNINSTALL=0
 PURGE=0
 
@@ -32,14 +32,14 @@ usage() {
 Usage: install.sh [options]
 
   --from-bin PATH       Install using a prebuilt local binary (recommended for custom builds)
-  --release-url URL     Download natgfw-linux-<arch> and SHA256SUMS from URL
+  --release-url URL     Download snapgfw-linux-<arch> and SHA256SUMS from URL
   --listen ADDR         Web panel listen address (default: 0.0.0.0:9090)
   --bridge IFACE        Container bridge interface to protect (default: rmbr0)
   --low-mem             Enable low-memory tuning (GOMEMLIMIT=64MiB)
   --disable-rfw         Stop and disable runman's built-in rfw.service to avoid overlap
-  --with-geo            Download latest geosite.dat and geoip.dat into /var/lib/natgfw/
+  --with-geo            Download latest geosite.dat and geoip.dat into /var/lib/snapgfw/
   --uninstall           Stop service, clean nft table and remove binary/unit (keeps data)
-  --purge               With --uninstall: also delete /etc/natgfw and /var/lib/natgfw
+  --purge               With --uninstall: also delete /etc/snapgfw and /var/lib/snapgfw
   -h, --help            Show help
 EOF
 }
@@ -70,16 +70,16 @@ case "$(uname -m)" in
 esac
 
 uninstall() {
-  log "stopping natgfw service"
-  systemctl disable --now natgfw.service 2>/dev/null || true
-  nft delete table inet natgfw 2>/dev/null || true
+  log "stopping snapgfw service"
+  systemctl disable --now snapgfw.service 2>/dev/null || true
+  nft delete table inet snapgfw 2>/dev/null || true
   rm -f "$SERVICE_FILE" "$BIN"
   systemctl daemon-reload
   if [[ "$PURGE" -eq 1 ]]; then
     log "purging $CFG_DIR and $DATA_DIR"
     rm -rf "$CFG_DIR" "$DATA_DIR"
   fi
-  log "natgfw uninstalled"
+  log "SnapGFW uninstalled"
 }
 
 if [[ "$UNINSTALL" -eq 1 ]]; then
@@ -116,21 +116,21 @@ trap 'rm -rf "$WORK"' EXIT
 
 if [[ -n "$FROM_BIN" ]]; then
   [[ -f "$FROM_BIN" ]] || die "binary not found: $FROM_BIN"
-  cp "$FROM_BIN" "$WORK/natgfw"
+  cp "$FROM_BIN" "$WORK/snapgfw"
 elif [[ -n "$RELEASE_URL" ]]; then
-  asset="natgfw-linux-${ARCH}"
+  asset="snapgfw-linux-${ARCH}"
   log "downloading $asset"
   curl -fsSL --retry 3 -o "$WORK/SHA256SUMS" "${RELEASE_URL}/SHA256SUMS" || die "failed downloading SHA256SUMS"
-  curl -fsSL --retry 3 -o "$WORK/natgfw" "${RELEASE_URL}/${asset}" || die "failed downloading ${asset}"
-  (cd "$WORK" && grep -E "  \*?${asset}\$" SHA256SUMS | awk '{print $1 "  natgfw"}' | sha256sum -c --quiet -) \
+  curl -fsSL --retry 3 -o "$WORK/snapgfw" "${RELEASE_URL}/${asset}" || die "failed downloading ${asset}"
+  (cd "$WORK" && grep -E "  \*?${asset}\$" SHA256SUMS | awk '{print $1 "  snapgfw"}' | sha256sum -c --quiet -) \
     || die "SHA256 verification failed for ${asset}"
 else
-  die "provide --from-bin <path> or --release-url <url> (or build locally with GOOS=linux GOARCH=${ARCH} go build ./cmd/natgfw)"
+  die "provide --from-bin <path> or --release-url <url> (or build locally with GOOS=linux GOARCH=${ARCH} go build ./cmd/snapgfw)"
 fi
 
-chmod 755 "$WORK/natgfw"
-"$WORK/natgfw" version >/dev/null || die "downloaded binary is not executable on this host"
-install -m 755 "$WORK/natgfw" "${BIN}.new"
+chmod 755 "$WORK/snapgfw"
+"$WORK/snapgfw" version >/dev/null || die "downloaded binary is not executable on this host"
+install -m 755 "$WORK/snapgfw" "${BIN}.new"
 mv -f "${BIN}.new" "$BIN"
 log "installed $($BIN version)"
 
@@ -149,7 +149,7 @@ if [[ ! -f "$CFG_FILE" ]]; then
   "data_dir": "${DATA_DIR}",
   "runman_data_dir": "/var/lib/runman-agent",
   "bridge_iface": "${BRIDGE}",
-  "nft_table": "natgfw",
+  "nft_table": "snapgfw",
   "queue_base": 200,
   "conn_mark_accept": 2001,
   "conn_mark_drop": 2002,
@@ -188,7 +188,7 @@ fi
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=natgfw NAT DPI Firewall & Panel
+Description=SnapGFW NAT DPI Firewall & Panel
 After=network-online.target nftables.service runman-agent.service
 Wants=network-online.target
 
@@ -198,7 +198,7 @@ User=root
 Environment=GOMEMLIMIT=${GOMEM}
 ExecStart=${BIN} serve -config ${CFG_FILE}
 ExecReload=/bin/kill -HUP \$MAINPID
-ExecStopPost=-/usr/sbin/nft delete table inet natgfw
+ExecStopPost=-/usr/sbin/nft delete table inet snapgfw
 Restart=always
 RestartSec=3s
 LimitNOFILE=1048576
@@ -209,15 +209,15 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now natgfw.service
+systemctl enable --now snapgfw.service
 sleep 1
-systemctl is-active --quiet natgfw.service || die "natgfw failed to start; inspect: journalctl -u natgfw -e"
+systemctl is-active --quiet snapgfw.service || die "snapgfw failed to start; inspect: journalctl -u snapgfw -e"
 
 echo
-log "natgfw is active"
+log "SnapGFW is active"
 echo "  panel:  http://${LISTEN}"
 if [[ "$FRESH" -eq 1 ]]; then
   echo "  login:  admin / ${PASSWORD}"
 fi
-echo "  logs:   journalctl -u natgfw -f"
-echo "  nft:    nft list table inet natgfw"
+echo "  logs:   journalctl -u snapgfw -f"
+echo "  nft:    nft list table inet snapgfw"

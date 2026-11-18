@@ -18,20 +18,20 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"natgfw/internal/config"
-	"natgfw/internal/engine"
-	"natgfw/internal/model"
-	"natgfw/internal/netfilter"
-	"natgfw/internal/notify"
-	"natgfw/internal/runman"
-	"natgfw/internal/store"
+	"snapgfw/internal/config"
+	"snapgfw/internal/engine"
+	"snapgfw/internal/model"
+	"snapgfw/internal/netfilter"
+	"snapgfw/internal/notify"
+	"snapgfw/internal/runman"
+	"snapgfw/internal/store"
 )
 
 //go:embed ui.html
 var uiHTML []byte
 
 const (
-	sessionCookieName = "natgfw_session"
+	sessionCookieName = "snapgfw_session"
 	sessionTTL        = 12 * time.Hour
 	loginWindow       = 10 * time.Minute
 	loginMaxFailures  = 5
@@ -123,8 +123,8 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) requireAuth(csrfCheck bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if csrfCheck && r.Header.Get("X-Natgfw") != "1" {
-			writeErr(w, http.StatusForbidden, "missing X-Natgfw header")
+		if csrfCheck && r.Header.Get("X-Snapgfw") != "1" {
+			writeErr(w, http.StatusForbidden, "missing X-Snapgfw header")
 			return
 		}
 		cookie, err := r.Cookie(sessionCookieName)
@@ -294,6 +294,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"heap_alloc_mb":      float64(mem.HeapAlloc) / (1024 * 1024),
 		"sys_mem_mb":         float64(mem.Sys) / (1024 * 1024),
 		"low_mem_mode":       cfg.LowMemMode,
+		"audit_ring_cap":     s.audit.RingCap(),
+		"audit_max_disk_mb":  float64(s.audit.MaxDiskBytes()) / (1024 * 1024),
 	})
 }
 
@@ -332,7 +334,7 @@ func (s *Server) handleExportPolicy(w http.ResponseWriter, r *http.Request) {
 	pol := s.policy.Get()
 	raw, _ := json.MarshalIndent(pol, "", "  ")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="natgfw-policy.json"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="snapgfw-policy.json"`)
 	_, _ = w.Write(append(raw, '\n'))
 }
 
@@ -646,7 +648,7 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请先保存 Webhook URL 或 Telegram 配置")
 		return
 	}
-	s.notifier.Send(pol.Notify, "test", "natgfw 测试告警", "这是一条来自 natgfw 防火墙面板的测试通知。", map[string]string{"status": "ok"})
+	s.notifier.Send(pol.Notify, "test", "SnapGFW 测试告警", "这是一条来自 SnapGFW 防火墙面板的测试通知。", map[string]string{"status": "ok"})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

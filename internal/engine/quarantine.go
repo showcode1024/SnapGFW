@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
-	"natgfw/internal/model"
-	"natgfw/internal/netfilter"
-	"natgfw/internal/notify"
-	"natgfw/internal/store"
+	"snapgfw/internal/model"
+	"snapgfw/internal/netfilter"
+	"snapgfw/internal/notify"
+	"snapgfw/internal/store"
 )
 
 // QuarantinedTenant represents an active temporary kernel ban on a tenant IP.
@@ -53,7 +53,7 @@ func (q *QuarantineManager) RecordBlock(pol model.Policy, tenantIP, instanceID, 
 		q.notifier.Send(
 			pol.Notify,
 			"block:"+tenantIP,
-			"natgfw 拦截告警",
+			"SnapGFW 拦截告警",
 			fmt.Sprintf("租户 IP: %s (%s)\n原因: %s", tenantIP, hostname, reason),
 			map[string]string{"tenant_ip": tenantIP, "instance_id": instanceID, "reason": reason},
 		)
@@ -128,7 +128,7 @@ func (q *QuarantineManager) Ban(tenantIP, instanceID, hostname, reason string, d
 		q.notifier.Send(
 			notifyCfg,
 			"ban:"+tenantIP,
-			"natgfw 自动熔断隔离",
+			"SnapGFW 自动熔断隔离",
 			fmt.Sprintf("租户 IP: %s (%s)\n原因: %s\n隔离时长: %d 秒", tenantIP, hostname, reason, durationSec),
 			entry,
 		)

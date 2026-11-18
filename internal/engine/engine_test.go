@@ -6,10 +6,10 @@ import (
 	"net"
 	"testing"
 
-	"natgfw/internal/config"
-	"natgfw/internal/model"
-	"natgfw/internal/proto"
-	"natgfw/internal/store"
+	"snapgfw/internal/config"
+	"snapgfw/internal/model"
+	"snapgfw/internal/proto"
+	"snapgfw/internal/store"
 )
 
 func buildIPv4TCP(srcIP, dstIP net.IP, srcPort, dstPort uint16, seq uint32, flags uint8, payload []byte) []byte {
@@ -105,7 +105,15 @@ func TestEngine_TCPReassemblyOutOfOrderAndQuarantine(t *testing.T) {
 func TestEngine_IPv6UDPAndMidStreamSafety(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workers = 1
-	pol := model.BuildPreset("strict_block")
+	pol := model.BuildPreset("anti_blacklist")
+	// Enable WireGuard block manually to test IPv6 UDP detection
+	for i := range pol.Protocols {
+		if pol.Protocols[i].ID == model.ProtoWireGuard {
+			pol.Protocols[i].Enabled = true
+			pol.Protocols[i].Action = model.ActionBlock
+			pol.Protocols[i].Direction = model.DirBoth
+		}
+	}
 	eng := New(cfg, pol, nil, nil, nil)
 
 	peer6 := net.ParseIP("2001:db8::99")
@@ -125,5 +133,42 @@ func TestEngine_IPv6UDPAndMidStreamSafety(t *testing.T) {
 	midTCP := buildIPv4TCP(net.ParseIP("198.51.100.1"), net.ParseIP("10.91.0.2"), 44444, 22, 99999, TCPFlagACK|TCPFlagPSH, rnd)
 	if v := eng.ProcessSync(PacketEvent{StreamID: 202, Direction: proto.DirInbound, Reverse: false, Data: midTCP}); v != VerdictAcceptStream {
 		t.Fatalf("expected mid-stream TCP without SYN to offload safely, got %v", v)
+	}
+}
+
+func TestEngine_BurstLogDeduplication(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workers = 1
+	cfg.AuditRingCap = 50
+	cfg.AuditBurstSec = 5
+	pol := model.BuildPreset("anti_blacklist")
+
+	audit, err := store.NewAuditStore("", cfg.AuditRingCap, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := New(cfg, pol, audit, nil, nil)
+
+	peerIP := net.ParseIP("198.51.100.20")
+	tenantIP := net.ParseIP("10.91.0.9")
+
+	for i := uint32(1); i <= 6; i++ {
+		rnd := make([]byte, 64)
+		_, _ = rand.Read(rnd)
+		syn := buildIPv4TCP(peerIP, tenantIP, uint16(40000+i), 8388, i*1000, TCPFlagSYN, nil)
+		_ = eng.ProcessSync(PacketEvent{StreamID: 500 + i, Direction: proto.DirInbound, Reverse: false, Data: syn})
+		pay := buildIPv4TCP(peerIP, tenantIP, uint16(40000+i), 8388, i*1000+1, TCPFlagACK|TCPFlagPSH, rnd)
+		if v := eng.ProcessSync(PacketEvent{StreamID: 500 + i, Direction: proto.DirInbound, Reverse: false, Data: pay}); v != VerdictDropStream {
+			t.Fatalf("expected drop on FET stream %d, got %v", i, v)
+		}
+	}
+
+	blocks, _, _ := audit.Totals()
+	events := audit.Query("10.91.0.9", "fet_tcp", "block", "", 20)
+	if blocks != 6 {
+		t.Fatalf("expected exact counter blocks=6, got %d", blocks)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected burst log deduplication to store 1 ring event, got %d", len(events))
 	}
 }
