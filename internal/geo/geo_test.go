@@ -3,6 +3,8 @@ package geo
 import (
 	"encoding/binary"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -55,6 +57,12 @@ func TestDomainPolicyMatcher_FallbackAndExclude(t *testing.T) {
 	if m.Match("www.google.com") {
 		t.Fatal("unexpected match on google.com")
 	}
+	if m.Match("www.apple.com") || m.Match("www.microsoft.com") || m.Match("www.bing.com") {
+		t.Fatal("global domains (apple/microsoft/bing) must not be blocked by cn category")
+	}
+	if !m.Match("staticintl.cloudcachetci.com") || !m.Match("www.apple.cn") {
+		t.Fatal("expected Chinese cloud domain and .cn TLD to be matched")
+	}
 }
 
 func TestParseGeoSiteAndGeoIPBytes(t *testing.T) {
@@ -83,6 +91,41 @@ func TestParseGeoSiteAndGeoIPBytes(t *testing.T) {
 	}
 	if len(sites["US"]) != 0 || len(sites["CN"]) != 1 || sites["CN"][0].Value != "qq.com" {
 		t.Fatalf("unexpected parsed geosite result: %+v", sites)
+	}
+
+	// Verify geosite.dat CN category strips polluted international domains (www.apple.com / GEOLOCATION-!CN)
+	// while keeping genuine Chinese domains and .cn TLDs blocked.
+	var appleFull []byte
+	appleFull = append(appleFull, encodeVarintField(1, uint64(DomainFull))...)
+	appleFull = append(appleFull, encodeBytesField(2, []byte("www.apple.com"))...)
+	var cnWithApple []byte
+	cnWithApple = append(cnWithApple, encodeBytesField(1, []byte("CN"))...)
+	cnWithApple = append(cnWithApple, encodeBytesField(2, cnDom)...)
+	cnWithApple = append(cnWithApple, encodeBytesField(2, appleFull)...)
+
+	var intlDom []byte
+	intlDom = append(intlDom, encodeVarintField(1, uint64(DomainRoot))...)
+	intlDom = append(intlDom, encodeBytesField(2, []byte("global-brand.io"))...)
+	var notCNEntry []byte
+	notCNEntry = append(notCNEntry, encodeBytesField(1, []byte("GEOLOCATION-!CN"))...)
+	notCNEntry = append(notCNEntry, encodeBytesField(2, intlDom)...)
+
+	var pollutedCN []byte
+	pollutedCN = append(pollutedCN, encodeBytesField(1, cnWithApple)...)
+	pollutedCN = append(pollutedCN, encodeBytesField(1, notCNEntry)...)
+	pollutedPath := filepath.Join(t.TempDir(), "geosite.dat")
+	if err := os.WriteFile(pollutedPath, pollutedCN, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pm, fb := BuildDomainPolicyMatcher(pollutedPath, []string{"cn"}, nil, nil)
+	if fb {
+		t.Fatal("expected geosite.dat to load without fallback")
+	}
+	if pm.Match("www.apple.com") || pm.Match("api.global-brand.io") {
+		t.Fatal("expected www.apple.com and geolocation-!cn domains to be allowed")
+	}
+	if !pm.Match("www.qq.com") || !pm.Match("www.apple.cn") || !pm.Match("staticintl.cloudcachetci.com") {
+		t.Fatal("expected Chinese domains and .cn TLD to remain blocked")
 	}
 
 	// Build minimal protobuf GeoIPList

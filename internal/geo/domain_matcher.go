@@ -187,39 +187,84 @@ func (ds *DomainSet) matchTrie(d string) bool {
 }
 
 // DomainPolicyMatcher combines include (GeoSite + custom) and exclude override DomainSets.
+// Priority order:
+//  1. Exclude (user explicit exclude_domains whitelist) -> allow (false)
+//  2. CustomInclude (user explicit match_domains blacklist) -> match (true)
+//  3. AutoExclude (international/world domains stripped from geosite:cn direct-routing pollution) -> allow (false)
+//  4. Include (GeoSite categories + core Chinese domestic domains) -> match (true)
 type DomainPolicyMatcher struct {
-	Include *DomainSet
-	Exclude *DomainSet
+	Include       *DomainSet
+	CustomInclude *DomainSet
+	AutoExclude   *DomainSet
+	Exclude       *DomainSet
 }
 
 // Match returns true if domain is included and NOT excluded.
 func (m *DomainPolicyMatcher) Match(domain string) bool {
-	if m == nil || m.Include == nil {
+	if m == nil {
 		return false
 	}
 	if m.Exclude != nil && m.Exclude.Match(domain) {
 		return false
 	}
-	return m.Include.Match(domain)
+	if m.CustomInclude != nil && m.CustomInclude.Match(domain) {
+		return true
+	}
+	if m.AutoExclude != nil && m.AutoExclude.Match(domain) {
+		return false
+	}
+	return m.Include != nil && m.Include.Match(domain)
+}
+
+func isChineseTLDDomain(d string) bool {
+	d = NormalizeDomain(d)
+	return d == "cn" ||
+		strings.HasSuffix(d, ".cn") ||
+		strings.HasSuffix(d, ".xn--fiqs8s") ||
+		strings.HasSuffix(d, ".xn--55qx5d") ||
+		strings.HasSuffix(d, ".xn--io0a7i")
 }
 
 // BuildDomainPolicyMatcher compiles GeoSite categories + custom specs into a fast runtime matcher.
-// If geosite.dat is missing or fails to load, it gracefully falls back to embedded core CN domains when "cn" is requested.
+// When "cn" is requested, it blocks genuine Chinese domains (.cn TLDs + domestic platforms) while
+// automatically excluding international/global domains (such as www.apple.com, microsoft.com,
+// google.com, and geolocation-!cn) that upstream geosite.dat bundles into "cn" for direct-routing.
 func BuildDomainPolicyMatcher(geositePath string, cats, matchDomains, excludeDomains []string) (*DomainPolicyMatcher, bool) {
 	inc := NewDomainSet()
+	customInc := NewDomainSet()
+	autoExc := NewDomainSet()
 	exc := NewDomainSet()
+
 	for _, d := range matchDomains {
-		inc.AddSpec(d)
+		customInc.AddSpec(d)
 	}
 	for _, d := range excludeDomains {
 		exc.AddSpec(d)
+	}
+
+	coreCN := NewDomainSet()
+	for _, d := range BuiltinCNDomains {
+		coreCN.AddRoot(d)
+	}
+
+	wantsPureCN := false
+	loadCats := make([]string, 0, len(cats)+1)
+	for _, rawCat := range cats {
+		loadCats = append(loadCats, rawCat)
+		base, attr, _ := strings.Cut(strings.TrimSpace(rawCat), "@")
+		if strings.EqualFold(base, "CN") && attr == "" {
+			wantsPureCN = true
+		}
+	}
+	if wantsPureCN {
+		loadCats = append(loadCats, "GEOLOCATION-!CN")
 	}
 
 	usedFallback := false
 	if len(cats) > 0 {
 		var loaded map[string][]DomainEntry
 		if geositePath != "" {
-			if m, err := LoadGeoSiteCats(geositePath, cats); err == nil {
+			if m, err := LoadGeoSiteCats(geositePath, loadCats); err == nil {
 				loaded = m
 			}
 		}
@@ -228,6 +273,11 @@ func BuildDomainPolicyMatcher(geositePath string, cats, matchDomains, excludeDom
 			upper := strings.ToUpper(base)
 			if entries := loaded[upper]; len(entries) > 0 {
 				inc.AddGeoSiteEntries(entries, attr)
+				if upper == "CN" && attr == "" {
+					for _, d := range BuiltinCNDomains {
+						inc.AddRoot(d)
+					}
+				}
 			} else if upper == "CN" {
 				// Always enforce .cn + builtin core CN domains if geosite.dat is absent.
 				usedFallback = true
@@ -236,6 +286,28 @@ func BuildDomainPolicyMatcher(geositePath string, cats, matchDomains, excludeDom
 				}
 			}
 		}
+		if wantsPureCN {
+			for _, d := range BuiltinGlobalDomains {
+				autoExc.AddRoot(d)
+			}
+			for _, e := range loaded["GEOLOCATION-!CN"] {
+				val := NormalizeDomain(e.Value)
+				if val == "" || isChineseTLDDomain(val) || coreCN.Match(val) {
+					continue
+				}
+				switch e.Type {
+				case DomainRoot:
+					autoExc.AddRoot(val)
+				case DomainFull:
+					autoExc.AddFull(val)
+				}
+			}
+		}
 	}
-	return &DomainPolicyMatcher{Include: inc, Exclude: exc}, usedFallback
+	return &DomainPolicyMatcher{
+		Include:       inc,
+		CustomInclude: customInc,
+		AutoExclude:   autoExc,
+		Exclude:       exc,
+	}, usedFallback
 }
