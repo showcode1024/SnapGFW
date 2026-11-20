@@ -48,3 +48,28 @@ func TestDiscovery(t *testing.T) {
 		t.Fatalf("expected host port 22022, got %d", hp)
 	}
 }
+
+func TestParseContainerListJSON(t *testing.T) {
+	raw := `[
+		{
+			"Id": "0ec0bb7277b4b2378c2b6470ccb90dc9a87aafb55f8130850d58c652910dc51f",
+			"Names": ["/171e0aaf-40c8-4bd5-a343-0c3ac6469f54"],
+			"State": "running",
+			"NetworkSettings": {
+				"Networks": {
+					"narwhal-net": {
+						"IPAddress": "10.91.0.8",
+						"GlobalIPv6Address": "fd91::8"
+					}
+				}
+			}
+		}
+	]`
+	insts, err := ParseContainerListJSON([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(insts) != 1 || insts[0].ID != "0ec0bb7277b4" || insts[0].Hostname != "171e0aaf-40c8-4bd5-a343-0c3ac6469f54" || insts[0].IPv4 != "10.91.0.8" || insts[0].IPv6 != "fd91::8" {
+		t.Fatalf("unexpected parsed podman container: %+v", insts)
+	}
+}

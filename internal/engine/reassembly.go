@@ -27,6 +27,11 @@ func newTCPHalfReassembler(maxBytes int) tcpHalfReassembler {
 	return tcpHalfReassembler{maxBytes: maxBytes}
 }
 
+// Capped reports whether this half-stream has emitted its configured inspection prefix budget.
+func (r *tcpHalfReassembler) Capped() bool {
+	return r.emitted >= r.maxBytes
+}
+
 // Push processes one TCP segment and returns newly contiguous bytes (up to maxBytes total)
 // plus midStream=true if a non-SYN packet arrives before initialization.
 func (r *tcpHalfReassembler) Push(seq uint32, flags uint8, payload []byte) (contiguous []byte, midStream bool) {

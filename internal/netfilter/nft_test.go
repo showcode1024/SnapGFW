@@ -103,3 +103,18 @@ func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 		t.Fatalf("expected empty default policy to skip NFQUEUE rules:\n%s", emptyScript)
 	}
 }
+
+func TestParseNFTJSONStats(t *testing.T) {
+	raw := `{
+		"nftables": [
+			{"rule": {"chain": "forward", "expr": [{"match": {"right": "@quarantine4"}}, {"counter": {"packets": 12, "bytes": 720}}, {"drop": null}]}},
+			{"rule": {"chain": "forward", "expr": [{"match": {"left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 3333}}, {"counter": {"packets": 5, "bytes": 300}}, {"drop": null}]}},
+			{"rule": {"chain": "forward", "expr": [{"add": {"set": "@conn_rate4"}}, {"counter": {"packets": 63472, "bytes": 3845885}}, {"drop": null}]}},
+			{"rule": {"chain": "forward", "expr": [{"match": {"left": {"ct": {"key": "mark"}}, "right": 2002}}, {"counter": {"packets": 999, "bytes": 50000}}, {"drop": null}]}}
+		]
+	}`
+	st := ParseNFTJSONStats([]byte(raw), 2002)
+	if st.QuarantineDrops != 12 || st.PortDrops != 5 || st.RateDrops != 63472 || st.TotalDrops != 63489 {
+		t.Fatalf("unexpected L4 stats (must exclude ct mark 2002 DPI drops): %+v", st)
+	}
+}

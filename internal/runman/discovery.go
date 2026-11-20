@@ -1,10 +1,14 @@
 package runman
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -53,9 +57,10 @@ type forwardKey struct {
 	guestPort uint16
 }
 
-// Snapshot holds a point-in-time read-only view of runman-agent instances and forwards.
+// Snapshot holds a point-in-time read-only view of discovered container instances and forwards.
 type Snapshot struct {
 	Available bool
+	Source    string // "runman" | "podman" | "docker"
 	UpdatedAt time.Time
 	Instances []Instance
 	byIP      map[string]Instance
@@ -83,43 +88,83 @@ func (s *Snapshot) LookupHostPort(ip, proto string, guestPort uint16) uint16 {
 	}]
 }
 
-// Discovery periodically reads runman-agent's data directory in read-only mode.
+// Discovery periodically reads runman-agent's data directory or local Podman/Docker sockets (read-only).
 type Discovery struct {
-	dataDir string
-	mu      sync.RWMutex
-	snap    *Snapshot
+	dataDir     string
+	socketPaths []string
+	mu          sync.RWMutex
+	snap        *Snapshot
 }
 
-// NewDiscovery creates a Discovery reader for the given runman-agent data directory.
+// NewDiscovery creates a Discovery reader for runman-agent with automatic Podman/Docker socket fallback.
 func NewDiscovery(dataDir string) *Discovery {
-	d := &Discovery{dataDir: dataDir}
+	d := &Discovery{
+		dataDir:     dataDir,
+		socketPaths: []string{"/run/podman/podman.sock", "/var/run/docker.sock"},
+	}
 	_ = d.Refresh()
 	return d
 }
 
-// Refresh reloads instances and portforwards from disk (read-only).
+// Refresh reloads instances and portforwards from disk or local Podman/Docker socket (read-only).
 func (d *Discovery) Refresh() error {
 	snap := &Snapshot{
 		UpdatedAt: time.Now(),
 		byIP:      make(map[string]Instance),
 		hostPorts: make(map[forwardKey]uint16),
 	}
-	if d.dataDir == "" {
-		d.setSnapshot(snap)
-		return nil
-	}
-
-	instDir := filepath.Join(d.dataDir, "instances")
-	entries, err := os.ReadDir(instDir)
-	if err != nil {
-		if os.IsNotExist(err) {
+	if d.dataDir != "" {
+		instDir := filepath.Join(d.dataDir, "instances")
+		entries, err := os.ReadDir(instDir)
+		if err == nil {
+			snap.Available = true
+			snap.Source = "runman"
+			d.loadRunman(snap, instDir, entries)
 			d.setSnapshot(snap)
 			return nil
 		}
-		return err
+		if !os.IsNotExist(err) {
+			return err
+		}
 	}
-	snap.Available = true
 
+	// Fallback: query local Podman or Docker Unix socket (rate-limited to 5s to keep UI polls lightweight).
+	if prev := d.Snapshot(); prev != nil && (prev.Source == "podman" || prev.Source == "docker") && time.Since(prev.UpdatedAt) < 5*time.Second {
+		return nil
+	}
+	if runtime.GOOS == "linux" {
+		for _, sock := range d.socketPaths {
+			if st, err := os.Stat(sock); err != nil || st.IsDir() {
+				continue
+			}
+			insts, err := queryContainerSocket(sock)
+			if err != nil {
+				continue
+			}
+			snap.Available = true
+			if strings.Contains(sock, "podman") {
+				snap.Source = "podman"
+			} else {
+				snap.Source = "docker"
+			}
+			for _, inst := range insts {
+				snap.Instances = append(snap.Instances, inst)
+				if inst.IPv4 != "" {
+					snap.byIP[inst.IPv4] = inst
+				}
+				if inst.IPv6 != "" {
+					snap.byIP[inst.IPv6] = inst
+				}
+			}
+			d.setSnapshot(snap)
+			return nil
+		}
+	}
+	d.setSnapshot(snap)
+	return nil
+}
+
+func (d *Discovery) loadRunman(snap *Snapshot, instDir string, entries []os.DirEntry) {
 	forwardsByVM := make(map[string][]PortForward)
 	if rawFw, err := os.ReadFile(filepath.Join(d.dataDir, "portforwards.json")); err == nil {
 		var fws []PortForward
@@ -177,8 +222,93 @@ func (d *Discovery) Refresh() error {
 	sort.Slice(snap.Instances, func(i, j int) bool {
 		return snap.Instances[i].Index < snap.Instances[j].Index
 	})
-	d.setSnapshot(snap)
-	return nil
+}
+
+func queryContainerSocket(sockPath string) ([]Instance, error) {
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", sockPath)
+		},
+	}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: 2 * time.Second}
+	resp, err := client.Get("http://unix/v1.40/containers/json")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, io.ErrUnexpectedEOF
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	return ParseContainerListJSON(body)
+}
+
+// ParseContainerListJSON decodes Docker/Podman compatible `/containers/json` responses into Instance records.
+func ParseContainerListJSON(raw []byte) ([]Instance, error) {
+	var items []struct {
+		ID              string   `json:"Id"`
+		Names           []string `json:"Names"`
+		State           string   `json:"State"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress         string `json:"IPAddress"`
+				GlobalIPv6Address string `json:"GlobalIPv6Address"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	out := make([]Instance, 0, len(items))
+	for i, c := range items {
+		shortID := c.ID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+		name := shortID
+		if len(c.Names) > 0 {
+			trimmed := strings.TrimPrefix(strings.TrimSpace(c.Names[0]), "/")
+			if trimmed != "" {
+				name = trimmed
+			}
+		}
+		var ipv4, ipv6 string
+		// Sort network names for deterministic IP extraction
+		netNames := make([]string, 0, len(c.NetworkSettings.Networks))
+		for k := range c.NetworkSettings.Networks {
+			netNames = append(netNames, k)
+		}
+		sort.Strings(netNames)
+		for _, nk := range netNames {
+			nw := c.NetworkSettings.Networks[nk]
+			if ipv4 == "" && nw.IPAddress != "" {
+				ipv4 = normalizeIP(nw.IPAddress)
+			}
+			if ipv6 == "" && nw.GlobalIPv6Address != "" {
+				ipv6 = normalizeIP(nw.GlobalIPv6Address)
+			}
+		}
+		if ipv4 == "" && ipv6 == "" {
+			continue
+		}
+		out = append(out, Instance{
+			ID:       shortID,
+			Index:    uint32(i + 1),
+			Hostname: name,
+			Desired:  c.State,
+			IPv4:     ipv4,
+			IPv6:     ipv6,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].IPv4 < out[j].IPv4
+	})
+	return out, nil
 }
 
 func (d *Discovery) setSnapshot(s *Snapshot) {

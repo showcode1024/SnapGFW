@@ -148,6 +148,7 @@ type streamEntry struct {
 	l4Proto  uint8
 	meta     proto.FlowMeta
 	lastSeen time.Time
+	pktCount int
 	verdict  Verdict
 	finished bool
 	tcpC2S   tcpHalfReassembler
@@ -322,6 +323,7 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 	if ent.finished {
 		return ent.verdict
 	}
+	ent.pktCount++
 
 	var outcome proto.EvalOutcome
 	if pkt.L4Proto == 6 {
@@ -338,13 +340,16 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 			return VerdictAcceptStream
 		}
 		if len(chunk) == 0 {
-			if pkt.TCPFlags&(TCPFlagFIN|TCPFlagRST) != 0 {
+			if pkt.TCPFlags&(TCPFlagFIN|TCPFlagRST) != 0 || (ent.tcpC2S.Capped() && ent.tcpS2C.Capped()) || ent.pktCount >= 64 {
 				w.finishEntry(ent, VerdictAcceptStream)
 				return VerdictAcceptStream
 			}
 			return VerdictAccept
 		}
 		outcome = ent.tcpSess.Feed(ev.Reverse, chunk)
+		if outcome.Decision == proto.DecisionContinue && ((ent.tcpC2S.Capped() && ent.tcpS2C.Capped()) || ent.pktCount >= 64) {
+			outcome.Decision = proto.DecisionAllow
+		}
 	} else {
 		outcome = ent.udpSess.Feed(ev.Reverse, pkt.Payload)
 	}

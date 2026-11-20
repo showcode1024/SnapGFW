@@ -230,6 +230,12 @@ func isChineseTLDDomain(d string) bool {
 // automatically excluding international/global domains (such as www.apple.com, microsoft.com,
 // google.com, and geolocation-!cn) that upstream geosite.dat bundles into "cn" for direct-routing.
 func BuildDomainPolicyMatcher(geositePath string, cats, matchDomains, excludeDomains []string) (*DomainPolicyMatcher, bool) {
+	return BuildDomainPolicyMatcherWithCache(geositePath, cats, matchDomains, excludeDomains, nil)
+}
+
+// BuildDomainPolicyMatcherWithCache compiles a DomainPolicyMatcher reusing pre-loaded GeoSite
+// categories from preloaded (when non-nil) to avoid reading geosite.dat repeatedly per rule.
+func BuildDomainPolicyMatcherWithCache(geositePath string, cats, matchDomains, excludeDomains []string, preloaded map[string][]DomainEntry) (*DomainPolicyMatcher, bool) {
 	inc := NewDomainSet()
 	customInc := NewDomainSet()
 	autoExc := NewDomainSet()
@@ -262,8 +268,8 @@ func BuildDomainPolicyMatcher(geositePath string, cats, matchDomains, excludeDom
 
 	usedFallback := false
 	if len(cats) > 0 {
-		var loaded map[string][]DomainEntry
-		if geositePath != "" {
+		loaded := preloaded
+		if loaded == nil && geositePath != "" {
 			if m, err := LoadGeoSiteCats(geositePath, loadCats); err == nil {
 				loaded = m
 			}

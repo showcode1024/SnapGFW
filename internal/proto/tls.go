@@ -88,7 +88,7 @@ func ParseTLSClientHello(b []byte) (TLSClientHello, TLSParseStatus) {
 				break
 			}
 		}
-		if records > 16 {
+		if records > 32 {
 			return TLSClientHello{}, TLSMalformed
 		}
 	}

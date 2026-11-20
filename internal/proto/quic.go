@@ -292,6 +292,14 @@ func parseQUICCryptoFrames(payload []byte) ([]quicCryptoFrame, error) {
 		if ft == 0x00 || ft == 0x01 { // PADDING or PING
 			continue
 		}
+		if ft == 0x02 || ft == 0x03 { // ACK or ACK_ECN (allowed in Initial retransmissions per RFC 9000)
+			nextPos, ok := skipQUICAckFrame(payload, pos, ft == 0x03)
+			if !ok {
+				return nil, errors.New("invalid ack frame in initial")
+			}
+			pos = nextPos
+			continue
+		}
 		if ft != 0x06 { // CRYPTO
 			return nil, errors.New("unexpected frame in initial")
 		}
@@ -328,4 +336,41 @@ func readQUICVarint(b []byte) (uint64, int) {
 		val = (val << 8) | uint64(b[i])
 	}
 	return val, length
+}
+
+func skipQUICAckFrame(payload []byte, pos int, hasECN bool) (int, bool) {
+	// Largest Acknowledged, ACK Delay, ACK Range Count, First ACK Range
+	var rangeCount uint64
+	for i := 0; i < 4; i++ {
+		v, n := readQUICVarint(payload[pos:])
+		if n <= 0 {
+			return 0, false
+		}
+		if i == 2 {
+			rangeCount = v
+		}
+		pos += n
+	}
+	if rangeCount > 64 {
+		return 0, false
+	}
+	for i := uint64(0); i < rangeCount; i++ {
+		for j := 0; j < 2; j++ { // Gap + ACK Range Length
+			_, n := readQUICVarint(payload[pos:])
+			if n <= 0 {
+				return 0, false
+			}
+			pos += n
+		}
+	}
+	if hasECN {
+		for i := 0; i < 3; i++ { // ECT0, ECT1, ECN-CE counts
+			_, n := readQUICVarint(payload[pos:])
+			if n <= 0 {
+				return 0, false
+			}
+			pos += n
+		}
+	}
+	return pos, true
 }

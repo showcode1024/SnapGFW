@@ -456,3 +456,48 @@ func TestUDPProxy_BlocksHy2TUICAndObfsButAllowsDNSAndNTP(t *testing.T) {
 		t.Fatalf("expected Hy2/TUIC QUIC to stay blocked when BlockAllUDP=false, got %+v", rHy2Soft)
 	}
 }
+
+func TestTrojanOffloadWithoutCCSAndSharedGeoSite(t *testing.T) {
+	cp := testPolicy()
+
+	// P0-3: tls_sni and quic_sni with identical geosite config must share the same DomainPolicyMatcher pointer
+	if cp.Rules[model.ProtoTLSSNI].DomainMatcher == nil || cp.Rules[model.ProtoTLSSNI].DomainMatcher != cp.Rules[model.ProtoQUICSNI].DomainMatcher {
+		t.Fatalf("expected tls_sni and quic_sni to share a single DomainPolicyMatcher instance")
+	}
+
+	// P0-1: TLS 1.3 connection without ChangeCipherSpec must offload promptly instead of looping forever
+	sess := NewTCPSession(testMeta("tcp", DirInbound, 443), cp, 16384)
+	ch := wrapTLSRecord(buildClientHelloMsg("www.cloudflare.com", false))
+	r := sess.Feed(false, ch)
+	if r.Decision != DecisionContinue {
+		t.Fatalf("expected post-TLS Trojan tracking to continue initially, got %+v", r)
+	}
+	offloaded := false
+	chunk := make([]byte, 1400)
+	chunk[0] = 0x17
+	for i := 0; i < 30; i++ {
+		res := sess.Feed(i%2 == 1, chunk)
+		if res.Decision == DecisionAllow {
+			offloaded = true
+			break
+		}
+	}
+	if !offloaded {
+		t.Fatalf("expected TLS stream without ChangeCipherSpec to offload within 24 packets/32KB")
+	}
+
+	// P1-5: Stratum mining with leading whitespace must still be caught
+	sMine := NewTCPSession(testMeta("tcp", DirOutbound, 3333), cp, 16384)
+	rMine := sMine.Feed(false, []byte("  \t{\"id\":1,\"method\":\"mining.hello\",\"params\":[]}\n"))
+	if rMine.Decision != DecisionBlock || len(rMine.Events) != 1 || rMine.Events[0].Protocol != model.ProtoMining {
+		t.Fatalf("expected leading-whitespace Stratum mining block, got %+v", rMine)
+	}
+
+	// P1-5: QUIC CRYPTO frame parser must skip ACK frames inside Initial packets
+	// ACK frame: type=0x02, largest=0, delay=0, range_count=0, first_range=0, followed by CRYPTO frame (0x06, off=0, len=3, "abc")
+	payloadWithAck := []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x03, 'a', 'b', 'c'}
+	frames, err := parseQUICCryptoFrames(payloadWithAck)
+	if err != nil || len(frames) != 1 || string(frames[0].Data) != "abc" {
+		t.Fatalf("expected parseQUICCryptoFrames to skip ACK frame, got frames=%+v err=%v", frames, err)
+	}
+}

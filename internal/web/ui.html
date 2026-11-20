@@ -229,7 +229,8 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
       </header>
       <div class="metrics">
         <div class="metric"><span class="metric-lbl">总数据包</span><span id="m-pkts" class="metric-val">0</span></div>
-        <div class="metric"><span class="metric-lbl">已拦截</span><span id="m-blocks" class="metric-val">0</span></div>
+        <div class="metric"><span class="metric-lbl">DPI 拦截</span><span id="m-blocks" class="metric-val">0</span></div>
+        <div class="metric" id="m-l4-box"><span class="metric-lbl">L4 丢弃</span><span id="m-l4" class="metric-val">0</span></div>
         <div class="metric"><span class="metric-lbl">受管实例</span><span id="m-insts" class="metric-val">0</span></div>
         <div class="metric"><span class="metric-lbl">当前隔离</span><span id="m-bans" class="metric-val">0</span></div>
         <div class="metric"><span class="metric-lbl">DPI 线程</span><span id="m-wkrs" class="metric-val" style="color:var(--text-2)">0</span></div>
@@ -702,6 +703,12 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
     const bEl = $('#m-blocks');
     bEl.textContent = blk.toLocaleString();
     bEl.className = 'metric-val' + (blk > 0 ? ' danger' : '');
+    const l4 = ov.l4_stats || {};
+    const l4Total = l4.total_drops || 0;
+    const l4El = $('#m-l4');
+    l4El.textContent = l4Total.toLocaleString();
+    l4El.className = 'metric-val' + (l4Total > 0 ? ' warn' : '');
+    $('#m-l4-box').title = `端口规则: ${l4.port_drops || 0} · 速率/并发限速: ${l4.rate_drops || 0} · 隔离丢弃: ${l4.quarantine_drops || 0}`;
     $('#m-insts').textContent = ov.instance_count || 0;
     const q = ov.quarantine_count || 0;
     const qEl = $('#m-bans');

@@ -171,6 +171,29 @@ func TestEngine_BurstLogDeduplication(t *testing.T) {
 	}
 }
 
+func TestQuarantineReapplyActive(t *testing.T) {
+	qm := NewQuarantineManager("snapgfw", nil, nil)
+	var applied []string
+	var lastDur int
+	qm.applyBan = func(_, ip string, dur int) error {
+		applied = append(applied, ip)
+		lastDur = dur
+		return nil
+	}
+	qm.applyUnban = func(_, _ string) error { return nil }
+
+	if err := qm.Ban("10.91.0.55", "c1", "box1", "mining", 300, false, model.NotifyConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	applied = nil
+	if err := qm.ReapplyActive(); err != nil {
+		t.Fatalf("ReapplyActive failed: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != "10.91.0.55" || lastDur < 290 || lastDur > 300 {
+		t.Fatalf("expected ReapplyActive to restore active ban with remaining TTL, got applied=%v dur=%d", applied, lastDur)
+	}
+}
+
 func makeTestCipher(n int, seed byte) []byte {
 	out := make([]byte, n)
 	state := seed ^ 0x9b

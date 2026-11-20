@@ -247,7 +247,7 @@ User=root
 Environment=GOMEMLIMIT=${GOMEM}
 ExecStart=${BIN} serve -config ${CFG_FILE}
 ExecReload=/bin/kill -HUP \$MAINPID
-ExecStopPost=-/usr/sbin/nft delete table inet snapgfw
+ExecStopPost=-/bin/sh -c 'nft list table inet snapgfw >/dev/null 2>&1 && nft delete table inet snapgfw || true'
 Restart=always
 RestartSec=3s
 LimitNOFILE=1048576

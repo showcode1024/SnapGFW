@@ -32,7 +32,7 @@ import (
 	"snapgfw/internal/web"
 )
 
-var version = "v0.4.2"
+var version = "v0.5.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -134,11 +134,25 @@ func runServe(args []string) {
 	selfRestart := false
 	restartCh := make(chan struct{}, 1)
 
+	applyRuntime := func(c config.Config, pol model.Policy) error {
+		if *noEngine {
+			eng.UpdatePolicy(pol)
+			return nil
+		}
+		if err := web.ApplyPolicyRuntime(c, pol, eng); err != nil {
+			return err
+		}
+		if err := qm.ReapplyActive(); err != nil {
+			log.Printf("warning: reapply active quarantine entries after nft reload: %v", err)
+		}
+		return nil
+	}
+
 	if !*noEngine {
 		if err := netfilter.CheckHostPrereqs(); err != nil {
 			log.Fatalf("host netfilter prerequisite check failed: %v", err)
 		}
-		if err := web.ApplyPolicyRuntime(cfg, ps.Get(), eng); err != nil {
+		if err := applyRuntime(cfg, ps.Get()); err != nil {
 			log.Fatalf("apply initial nftables policy: %v", err)
 		}
 		defer func() {
@@ -152,13 +166,7 @@ func runServe(args []string) {
 	}
 
 	srv := web.NewServer(*cfgPath, cfg, ps, as, eng, disc, qm, notif)
-	srv.SetApplyConfigHook(func(nextCfg config.Config, pol model.Policy) error {
-		if *noEngine {
-			eng.UpdatePolicy(pol)
-			return nil
-		}
-		return web.ApplyPolicyRuntime(nextCfg, pol, eng)
-	})
+	srv.SetApplyConfigHook(applyRuntime)
 	srv.SetUpdater(updater.New(version, func() {
 		select {
 		case restartCh <- struct{}{}:
@@ -167,11 +175,7 @@ func runServe(args []string) {
 	}))
 
 	ps.OnChange(func(next model.Policy) error {
-		if *noEngine {
-			eng.UpdatePolicy(next)
-			return nil
-		}
-		return web.ApplyPolicyRuntime(srv.Config(), next, eng)
+		return applyRuntime(srv.Config(), next)
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

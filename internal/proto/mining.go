@@ -33,6 +33,18 @@ var BuiltinMiningPoolDomains = []string{
 	"slushpool.com",
 	"luxor.tech",
 	"spiderpool.com",
+	"k1pool.com",
+	"hummerpool.com",
+	"f2pool.io",
+	"poolbinance.com",
+	"kaspa-pool.org",
+	"acc-pool.pw",
+	"zk.work",
+	"aleo1.to",
+	"p2pool.io",
+	"xmrpool.eu",
+	"gntl.uk",
+	"hashcity.org",
 }
 
 // MiningStatus indicates plaintext Stratum JSON-RPC mining handshake progress.
@@ -49,7 +61,10 @@ var stratumMethods = [][]byte{
 	[]byte(`"mining.authorize"`),
 	[]byte(`"mining.submit"`),
 	[]byte(`"mining.extranonce.subscribe"`),
+	[]byte(`"mining.hello"`),
+	[]byte(`"mining.configure"`),
 	[]byte(`"eth_submitlogin"`),
+	[]byte(`"eth_submitwork"`),
 	[]byte(`"eth_getwork"`),
 }
 

@@ -29,6 +29,8 @@ type TCPSession struct {
 	maxPrefix     int
 	clientBuf     []byte
 	serverBuf     []byte
+	totalBytes    int
+	postTLSPkts   int
 	done          bool
 	tlsDone       bool
 	httpDone      bool
@@ -64,21 +66,13 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 	if len(data) == 0 {
 		return EvalOutcome{Decision: DecisionContinue}
 	}
+	s.totalBytes += len(data)
 
-	if rev {
-		if len(s.serverBuf) < 8192 {
-			rem := 8192 - len(s.serverBuf)
-			s.serverBuf = append(s.serverBuf, data[:min(len(data), rem)]...)
-		}
-	} else {
-		if len(s.clientBuf) < s.maxPrefix {
-			rem := s.maxPrefix - len(s.clientBuf)
-			s.clientBuf = append(s.clientBuf, data[:min(len(data), rem)]...)
-		}
-	}
-
-	// If we are in post-TLS Trojan flight-length tracking mode, feed chunk directly.
+	// If we are in post-TLS Trojan flight-length tracking mode, feed chunk directly
+	// without growing clientBuf/serverBuf, and guarantee bounded offload even when
+	// TLS 1.3 omits ChangeCipherSpec.
 	if s.tlsDone && s.trojanActive {
+		s.postTLSPkts++
 		matched, tDone := s.trojan.Feed(rev, data)
 		if matched {
 			if cr, ok := s.cp.ActiveRule("trojan", s.meta); ok {
@@ -90,11 +84,23 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 				return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
 			}
 		}
-		if tDone || len(s.clientBuf)+len(s.serverBuf) >= s.maxPrefix*2 {
+		if tDone || s.postTLSPkts >= 24 || s.totalBytes >= s.maxPrefix*2 {
 			s.done = true
 			return EvalOutcome{Decision: DecisionAllow}
 		}
 		return EvalOutcome{Decision: DecisionContinue}
+	}
+
+	if rev {
+		if len(s.serverBuf) < 8192 {
+			rem := 8192 - len(s.serverBuf)
+			s.serverBuf = append(s.serverBuf, data[:min(len(data), rem)]...)
+		}
+	} else {
+		if len(s.clientBuf) < s.maxPrefix {
+			rem := s.maxPrefix - len(s.clientBuf)
+			s.clientBuf = append(s.clientBuf, data[:min(len(data), rem)]...)
+		}
 	}
 
 	// If in two-stage WebSocket payload inspection mode, unmask client WS frames and inspect entropy.
@@ -350,8 +356,8 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 		}
 	}
 
-	// 6.5 Raw Stratum TCP mining handshake (newline-delimited JSON-RPC starting with '{')
-	if _, miningActive := s.cp.ActiveRule("mining", s.meta); miningActive && c[0] == '{' {
+	// 6.5 Raw Stratum TCP mining handshake (newline-delimited JSON-RPC starting with optional whitespace + '{')
+	if _, miningActive := s.cp.ActiveRule("mining", s.meta); miningActive && firstNonSpaceByte(c) == '{' {
 		switch stRes, detail := DetectStratumTCP(c); stRes {
 		case MiningNeedMore:
 			return EvalOutcome{Decision: DecisionContinue}
@@ -396,6 +402,15 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 
 	s.done = true
 	return EvalOutcome{Decision: DecisionAllow}
+}
+
+func firstNonSpaceByte(b []byte) byte {
+	for _, ch := range b {
+		if ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n' {
+			return ch
+		}
+	}
+	return 0
 }
 
 func (s *TCPSession) emitSingle(id model.ProtocolID, detail string, allowIfNotBlock bool) EvalOutcome {

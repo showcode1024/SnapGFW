@@ -171,3 +171,24 @@ func (q *QuarantineManager) ListActive() []QuarantinedTenant {
 	}
 	return out
 }
+
+// ReapplyActive re-inserts all non-expired quarantined tenants into the kernel nftables set
+// after a full table reload (e.g., policy update or bridge switch) so bans are never lost.
+func (q *QuarantineManager) ReapplyActive() error {
+	if q == nil || q.applyBan == nil {
+		return nil
+	}
+	active := q.ListActive()
+	var firstErr error
+	now := time.Now()
+	for _, item := range active {
+		rem := int(item.ExpiresAt.Sub(now).Seconds())
+		if rem < 1 {
+			continue
+		}
+		if err := q.applyBan(q.tableName, item.TenantIP, rem); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}

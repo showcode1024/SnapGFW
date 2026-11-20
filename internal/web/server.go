@@ -20,6 +20,7 @@ import (
 
 	"snapgfw/internal/config"
 	"snapgfw/internal/engine"
+	"snapgfw/internal/geo"
 	"snapgfw/internal/model"
 	"snapgfw/internal/netfilter"
 	"snapgfw/internal/notify"
@@ -235,6 +236,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ok := req.Username == wantUser && passHash != "" && bcrypt.CompareHashAndPassword([]byte(passHash), []byte(req.Password)) == nil
 	if !ok {
 		s.authMu.Lock()
+		if len(s.failures) > 4096 {
+			for k, arr := range s.failures {
+				if len(arr) == 0 || now.Sub(arr[len(arr)-1]) >= loginWindow {
+					delete(s.failures, k)
+				}
+			}
+			if len(s.failures) > 4096 {
+				clear(s.failures)
+			}
+		}
 		s.failures[ipKey] = append(s.failures[ipKey], now)
 		s.authMu.Unlock()
 		writeErr(w, http.StatusUnauthorized, "invalid username or password")
@@ -247,14 +258,33 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.authMu.Lock()
 	delete(s.failures, ipKey)
+	if len(s.sessions) >= 128 {
+		var oldestKey string
+		var oldestExp time.Time
+		for k, exp := range s.sessions {
+			if !exp.After(now) {
+				delete(s.sessions, k)
+				continue
+			}
+			if oldestKey == "" || exp.Before(oldestExp) {
+				oldestKey = k
+				oldestExp = exp
+			}
+		}
+		if len(s.sessions) >= 128 && oldestKey != "" {
+			delete(s.sessions, oldestKey)
+		}
+	}
 	s.sessions[token] = now.Add(sessionTTL)
 	s.authMu.Unlock()
 
+	isHTTPS := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPS,
 		SameSite: http.SameSiteStrictMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": wantUser})
@@ -319,6 +349,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"host_proxy_compat":  !cfg.DisableHostProxy,
 		"nft_table":          cfg.NftTable,
 		"engine":             engStats,
+		"l4_stats":           netfilter.ReadL4Stats(cfg.NftTable, cfg.ConnMarkDrop),
 		"audit_blocks":       blocks,
 		"audit_logs":         logs,
 		"by_protocol":        byProto,
@@ -582,7 +613,7 @@ func (s *Server) handleGeoDownload(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.RUnlock()
 
 	client := &http.Client{Timeout: 60 * time.Second}
-	dl := func(url, dst string) error {
+	dl := func(url, dst string, validate func(tmpPath string) error) error {
 		resp, err := client.Get(url)
 		if err != nil {
 			return err
@@ -609,17 +640,35 @@ func (s *Server) handleGeoDownload(w http.ResponseWriter, r *http.Request) {
 			_ = os.Remove(tmp)
 			return closeErr
 		}
+		if validate != nil {
+			if err := validate(tmp); err != nil {
+				_ = os.Remove(tmp)
+				return err
+			}
+		}
 		return os.Rename(tmp, dst)
 	}
 
 	const gsURL = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
 	const giURL = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
 
-	if err := dl(gsURL, gsPath); err != nil {
+	if err := dl(gsURL, gsPath, func(p string) error {
+		m, err := geo.LoadGeoSiteCats(p, []string{"CN"})
+		if err != nil || len(m["CN"]) == 0 {
+			return fmt.Errorf("downloaded geosite.dat failed integrity check")
+		}
+		return nil
+	}); err != nil {
 		writeErr(w, http.StatusBadGateway, "geosite download failed: "+err.Error())
 		return
 	}
-	if err := dl(giURL, giPath); err != nil {
+	if err := dl(giURL, giPath, func(p string) error {
+		m, err := geo.LoadGeoIPCountries(p, []string{"CN"})
+		if err != nil || len(m["CN"]) == 0 {
+			return fmt.Errorf("downloaded geoip.dat failed integrity check")
+		}
+		return nil
+	}); err != nil {
 		writeErr(w, http.StatusBadGateway, "geoip download failed: "+err.Error())
 		return
 	}
@@ -737,7 +786,10 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请先保存 Webhook URL 或 Telegram 配置")
 		return
 	}
-	s.notifier.Send(pol.Notify, "test", "SnapGFW 测试告警", "这是一条来自 SnapGFW 防火墙面板的测试通知。", map[string]string{"status": "ok"})
+	if err := s.notifier.SendSync(pol.Notify, "SnapGFW 测试告警", "这是一条来自 SnapGFW 防火墙面板的测试通知。", map[string]string{"status": "ok"}); err != nil {
+		writeErr(w, http.StatusBadGateway, "测试通知发送失败: "+err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

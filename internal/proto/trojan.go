@@ -10,6 +10,8 @@ type TrojanTracker struct {
 	checkedFirst bool
 	counting     bool
 	lastRev      bool
+	ccsTail      [5]byte
+	ccsTailLen   int
 	seq          [4]int
 	seqIdx       int
 }
@@ -26,14 +28,48 @@ func (t *TrojanTracker) Feed(rev bool, data []byte) (matched bool, done bool) {
 			return false, true
 		}
 	}
-	if !rev && !t.counting && len(data) >= 6 {
-		if idx := bytes.Index(data, trojanCCSPattern); idx >= 0 && idx+6 <= len(data) {
-			t.counting = true
-			// Count remaining bytes in this flight after CCS (or from CCS if segmented).
-			data = data[idx:]
+	if !rev && !t.counting {
+		// Check for ChangeCipherSpec even when split across consecutive client TCP chunks.
+		if t.ccsTailLen > 0 {
+			comb := make([]byte, 0, t.ccsTailLen+min(len(data), 16))
+			comb = append(comb, t.ccsTail[:t.ccsTailLen]...)
+			comb = append(comb, data[:min(len(data), 16)]...)
+			if idx := bytes.Index(comb, trojanCCSPattern); idx >= 0 {
+				prevTail := t.ccsTailLen
+				t.counting = true
+				t.ccsTailLen = 0
+				// Bytes of CCS that fell in the previous chunk count toward flight 0.
+				prevPart := max(0, prevTail-idx)
+				t.seq[0] += prevPart
+				start := max(0, idx-prevTail)
+				if start < len(data) {
+					data = data[start:]
+				} else {
+					data = nil
+				}
+			}
+		}
+		if !t.counting {
+			if idx := bytes.Index(data, trojanCCSPattern); idx >= 0 {
+				t.counting = true
+				t.ccsTailLen = 0
+				data = data[idx:]
+			} else {
+				// Save up to last 5 bytes in case CCS begins at the end of this chunk.
+				if len(data) >= 5 {
+					copy(t.ccsTail[:], data[len(data)-5:])
+					t.ccsTailLen = 5
+				} else {
+					merged := append(append([]byte(nil), t.ccsTail[:t.ccsTailLen]...), data...)
+					if len(merged) > 5 {
+						merged = merged[len(merged)-5:]
+					}
+					t.ccsTailLen = copy(t.ccsTail[:], merged)
+				}
+			}
 		}
 	}
-	if t.counting {
+	if t.counting && len(data) > 0 {
 		if rev == t.lastRev {
 			t.seq[t.seqIdx] += len(data)
 		} else {

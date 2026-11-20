@@ -3,6 +3,7 @@ package proto
 import (
 	"net"
 	"slices"
+	"strings"
 
 	"snapgfw/internal/geo"
 	"snapgfw/internal/model"
@@ -63,6 +64,43 @@ func CompilePolicy(p model.Policy, geositePath string) *CompiledPolicy {
 	if len(p.TrustedTenants) > 0 {
 		cp.TrustedTenants = parseIPListMatcher(p.TrustedTenants)
 	}
+	// Preload all needed GeoSite categories in a single pass and share identical read-only
+	// DomainPolicyMatcher instances across rules (e.g. tls_sni & quic_sni both using "cn")
+	// to roughly halve geosite memory usage.
+	var preloadedGeo map[string][]geo.DomainEntry
+	if geositePath != "" && !p.GlobalBypass {
+		catSet := make(map[string]struct{})
+		for _, pr := range p.Protocols {
+			if !pr.Enabled {
+				continue
+			}
+			for _, rawCat := range pr.GeoSiteCats {
+				base, attr, _ := strings.Cut(strings.TrimSpace(rawCat), "@")
+				if base != "" {
+					upper := strings.ToUpper(base)
+					catSet[upper] = struct{}{}
+					if upper == "CN" && attr == "" {
+						catSet["GEOLOCATION-!CN"] = struct{}{}
+					}
+				}
+			}
+		}
+		if len(catSet) > 0 {
+			wanted := make([]string, 0, len(catSet))
+			for c := range catSet {
+				wanted = append(wanted, c)
+			}
+			if m, err := geo.LoadGeoSiteCats(geositePath, wanted); err == nil {
+				preloadedGeo = m
+			}
+		}
+	}
+	type matcherEntry struct {
+		matcher  *geo.DomainPolicyMatcher
+		fallback bool
+	}
+	matcherCache := make(map[string]matcherEntry)
+
 	for _, pr := range p.Protocols {
 		cr := &CompiledRule{
 			Rule:        pr,
@@ -74,15 +112,26 @@ func CompilePolicy(p model.Policy, geositePath string) *CompiledPolicy {
 		if len(pr.ExceptTenants) > 0 {
 			cr.ExceptTenants = parseIPListMatcher(pr.ExceptTenants)
 		}
-		matchDomains := pr.MatchDomains
-		if pr.ID == model.ProtoMining {
-			matchDomains = slices.Concat(BuiltinMiningPoolDomains, pr.MatchDomains)
-		}
-		if len(pr.GeoSiteCats) > 0 || len(matchDomains) > 0 || len(pr.ExcludeDomains) > 0 {
-			dm, fb := geo.BuildDomainPolicyMatcher(geositePath, pr.GeoSiteCats, matchDomains, pr.ExcludeDomains)
-			cr.DomainMatcher = dm
-			if fb {
-				cp.GeoFallback = true
+		if pr.Enabled && !p.GlobalBypass {
+			matchDomains := pr.MatchDomains
+			if pr.ID == model.ProtoMining {
+				matchDomains = slices.Concat(BuiltinMiningPoolDomains, pr.MatchDomains)
+			}
+			if len(pr.GeoSiteCats) > 0 || len(matchDomains) > 0 || len(pr.ExcludeDomains) > 0 {
+				cacheKey := domainMatcherKey(pr.GeoSiteCats, matchDomains, pr.ExcludeDomains)
+				if hit, ok := matcherCache[cacheKey]; ok {
+					cr.DomainMatcher = hit.matcher
+					if hit.fallback {
+						cp.GeoFallback = true
+					}
+				} else {
+					dm, fb := geo.BuildDomainPolicyMatcherWithCache(geositePath, pr.GeoSiteCats, matchDomains, pr.ExcludeDomains, preloadedGeo)
+					matcherCache[cacheKey] = matcherEntry{matcher: dm, fallback: fb}
+					cr.DomainMatcher = dm
+					if fb {
+						cp.GeoFallback = true
+					}
+				}
 			}
 		}
 		cp.Rules[pr.ID] = cr
@@ -151,4 +200,19 @@ func parseIPListMatcher(items []string) *geo.IPMatcher {
 		}
 	}
 	return geo.NewIPMatcher(nets)
+}
+
+func domainMatcherKey(cats, matchDomains, excludeDomains []string) string {
+	norm := func(in []string) string {
+		if len(in) == 0 {
+			return ""
+		}
+		cp := make([]string, len(in))
+		for i, v := range in {
+			cp[i] = strings.ToLower(strings.TrimSpace(v))
+		}
+		slices.Sort(cp)
+		return strings.Join(cp, ",")
+	}
+	return norm(cats) + "|" + norm(matchDomains) + "|" + norm(excludeDomains)
 }
