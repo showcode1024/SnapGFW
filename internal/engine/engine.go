@@ -179,6 +179,7 @@ type worker struct {
 	idleTTL     time.Duration
 	burstWindow time.Duration
 	logDedupe   map[logDedupeKey]time.Time
+	recentDrops map[uint32]time.Time
 }
 
 func newWorker(id int, eng *Engine) *worker {
@@ -192,6 +193,7 @@ func newWorker(id int, eng *Engine) *worker {
 		idleTTL:     time.Duration(eng.cfg.StreamIdleSec) * time.Second,
 		burstWindow: time.Duration(eng.cfg.AuditBurstSec) * time.Second,
 		logDedupe:   make(map[logDedupeKey]time.Time, 32),
+		recentDrops: make(map[uint32]time.Time, 64),
 	}
 }
 
@@ -234,6 +236,14 @@ func (w *worker) reapIdle(now time.Time) {
 			}
 		}
 	}
+	if len(w.recentDrops) > 0 {
+		dropExpire := now.Add(-15 * time.Second)
+		for id, ts := range w.recentDrops {
+			if ts.Before(dropExpire) {
+				delete(w.recentDrops, id)
+			}
+		}
+	}
 }
 
 func (w *worker) removeEntry(ent *streamEntry) {
@@ -272,6 +282,18 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 	}
 
 	if ent == nil {
+		// Prevent already-queued packets (e.g. pipelined data or immediate FIN/ACK right behind
+		// a dropped packet in NFQUEUE) from hitting mid-stream offload and overwriting ct mark DROP
+		// back to ACCEPT. A fresh TCP SYN clears any recycled conntrack ID.
+		if pkt.L4Proto == 6 && (pkt.TCPFlags&TCPFlagSYN != 0) && !ev.Reverse {
+			delete(w.recentDrops, ev.StreamID)
+		} else if ts, dropped := w.recentDrops[ev.StreamID]; dropped {
+			if time.Since(ts) < 15*time.Second {
+				return VerdictDropStream
+			}
+			delete(w.recentDrops, ev.StreamID)
+		}
+
 		meta := buildFlowMeta(ev, pkt, w.engine.discovery)
 		if w.engine.prober != nil && w.engine.prober.IsOwnProbe(meta) {
 			w.engine.offloadedAccept.Add(1)
@@ -290,9 +312,9 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 			return VerdictAcceptStream
 		}
 		// Mid-stream TCP packet without SYN (e.g., pre-existing SSH/HTTPS session before SnapGFW started):
-		// avoid false-triggering FET on mid-stream ciphertext; offload cleanly.
+		// avoid false-triggering FET on mid-stream ciphertext; offload cleanly without overwriting ct mark on empty FIN/ACK.
 		if pkt.L4Proto == 6 && (pkt.TCPFlags&TCPFlagSYN == 0) {
-			if len(pkt.Payload) == 0 && (pkt.TCPFlags&(TCPFlagFIN|TCPFlagRST)) == 0 {
+			if len(pkt.Payload) == 0 {
 				return VerdictAccept
 			}
 			w.engine.offloadedAccept.Add(1)
@@ -389,6 +411,10 @@ func (w *worker) finishEntry(ent *streamEntry, v Verdict) {
 		w.engine.offloadedAccept.Add(1)
 	} else if v == VerdictDropStream {
 		w.engine.offloadedDrop.Add(1)
+		if len(w.recentDrops) >= 2048 {
+			clear(w.recentDrops)
+		}
+		w.recentDrops[ent.streamID] = time.Now()
 	}
 	// Release evaluator memory immediately; drop entry from pending LRU.
 	w.removeEntry(ent)

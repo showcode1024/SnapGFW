@@ -239,6 +239,43 @@ func TestQuarantineBurstDedupeAndPrune(t *testing.T) {
 	}
 }
 
+func TestEngine_PipelinedFINAfterDropNeverOverwritesDropMark(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workers = 1
+	pol := model.BuildPreset("anti_abuse")
+	eng := New(cfg, pol, nil, nil, nil)
+
+	peerIP := net.ParseIP("198.51.100.40")
+	tenantIP := net.ParseIP("10.91.0.2")
+
+	// 1. Handshake + GET / to a hosted V2Board homepage
+	syn := buildIPv4TCP(peerIP, tenantIP, 52000, 18089, 1000, TCPFlagSYN, nil)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 777, Direction: proto.DirInbound, Reverse: false, Data: syn}); v != VerdictAccept {
+		t.Fatalf("expected SYN accept, got %v", v)
+	}
+	synAck := buildIPv4TCP(tenantIP, peerIP, 18089, 52000, 2000, TCPFlagSYN|TCPFlagACK, nil)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 777, Direction: proto.DirInbound, Reverse: true, Data: synAck}); v != VerdictAccept {
+		t.Fatalf("expected SYN-ACK accept, got %v", v)
+	}
+	req := buildIPv4TCP(peerIP, tenantIP, 52000, 18089, 1001, TCPFlagACK|TCPFlagPSH, []byte("GET / HTTP/1.1\r\nHost: shop.example\r\n\r\n"))
+	if v := eng.ProcessSync(PacketEvent{StreamID: 777, Direction: proto.DirInbound, Reverse: false, Data: req}); v != VerdictAccept {
+		t.Fatalf("expected GET / continue, got %v", v)
+	}
+
+	// 2. Server responds with V2Board HTML -> VerdictDropStream
+	respBytes := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><script src=\"/theme/v2board/assets/umi.js\"></script></html>")
+	resp := buildIPv4TCP(tenantIP, peerIP, 18089, 52000, 2001, TCPFlagACK|TCPFlagPSH, respBytes)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 777, Direction: proto.DirInbound, Reverse: true, Data: resp}); v != VerdictDropStream {
+		t.Fatalf("expected V2Board response to be dropped, got %v", v)
+	}
+
+	// 3. Server's pipelined FIN|ACK (already in NFQUEUE right behind resp) MUST NOT return VerdictAcceptStream!
+	fin := buildIPv4TCP(tenantIP, peerIP, 18089, 52000, 2001+uint32(len(respBytes)), TCPFlagFIN|TCPFlagACK, nil)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 777, Direction: proto.DirInbound, Reverse: true, Data: fin}); v != VerdictDropStream {
+		t.Fatalf("pipelined FIN after drop must remain VerdictDropStream (never overwrite ct mark), got %v", v)
+	}
+}
+
 func makeTestCipher(n int, seed byte) []byte {
 	out := make([]byte, n)
 	state := seed ^ 0x9b
