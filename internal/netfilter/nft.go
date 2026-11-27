@@ -128,7 +128,9 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 	}
 
 	// 4. Conntrack offload & L7 DPI NFQUEUE dispatch (4 queues encode flow & packet direction unambiguously)
-	dpiEnabled := hasEnabledProtocol(pol)
+	needTCP, needUDP := enabledDPIL4(pol)
+	dpiEnabled := needTCP || needUDP
+	l4BypassRule := l4SkipExpr(needTCP, needUDP)
 	qInOrig := cfg.QueueBase
 	qOutOrig := cfg.QueueBase + 1
 	qOutReply := cfg.QueueBase + 2
@@ -136,7 +138,7 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 	if dpiEnabled {
 		fmt.Fprintf(&b, "    ct mark %d counter accept\n", cfg.ConnMarkAccept)
 		fmt.Fprintf(&b, "    ct mark %d counter drop\n", cfg.ConnMarkDrop)
-		b.WriteString("    meta l4proto != { tcp, udp } accept\n")
+		fmt.Fprintf(&b, "    %s\n", l4BypassRule)
 		fmt.Fprintf(&b, "    oifname %q iifname != %q ct direction original counter queue num %d bypass\n", br, br, qInOrig)
 		fmt.Fprintf(&b, "    iifname %q oifname != %q ct direction original counter queue num %d bypass\n", br, br, qOutOrig)
 		fmt.Fprintf(&b, "    oifname %q iifname != %q ct direction reply counter queue num %d bypass\n", br, br, qOutReply)
@@ -166,7 +168,7 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 		if dpiEnabled {
 			fmt.Fprintf(&b, "    ct direction original ct mark %d counter accept\n", cfg.ConnMarkAccept)
 			fmt.Fprintf(&b, "    ct direction original ct mark %d counter drop\n", cfg.ConnMarkDrop)
-			b.WriteString("    meta l4proto != { tcp, udp } accept\n")
+			fmt.Fprintf(&b, "    %s\n", l4BypassRule)
 			fmt.Fprintf(&b, "    oifname %q ct direction original counter queue num %d bypass\n", br, qInOrig)
 		} else {
 			b.WriteString("    # no L7 protocol detectors enabled: skip NFQUEUE\n")
@@ -182,7 +184,7 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 		if dpiEnabled {
 			fmt.Fprintf(&b, "    ct direction reply ct mark %d counter accept\n", cfg.ConnMarkAccept)
 			fmt.Fprintf(&b, "    ct direction reply ct mark %d counter drop\n", cfg.ConnMarkDrop)
-			b.WriteString("    meta l4proto != { tcp, udp } accept\n")
+			fmt.Fprintf(&b, "    %s\n", l4BypassRule)
 			fmt.Fprintf(&b, "    iifname %q ct direction reply counter queue num %d bypass\n", br, qInReply)
 		} else {
 			b.WriteString("    # no L7 protocol detectors enabled: skip NFQUEUE\n")
@@ -194,13 +196,38 @@ func RenderNFT(cfg config.Config, pol model.Policy) (string, error) {
 	return b.String(), nil
 }
 
-func hasEnabledProtocol(pol model.Policy) bool {
+func enabledDPIL4(pol model.Policy) (needTCP, needUDP bool) {
 	for _, pr := range pol.Protocols {
-		if pr.Enabled && pr.Action != model.ActionAllow {
-			return true
+		if !pr.Enabled || pr.Action == model.ActionAllow {
+			continue
+		}
+		switch pr.ID {
+		case model.ProtoFETTCP, model.ProtoVLESSPlain, model.ProtoTLSUntrusted, model.ProtoAirportPanel,
+			model.ProtoSOCKS, model.ProtoHTTPProxy, model.ProtoWebSocket,
+			model.ProtoTLSSNI, model.ProtoTLSAnomaly, model.ProtoSSH, model.ProtoHTTPPlain:
+			needTCP = true
+		case model.ProtoFETUDP, model.ProtoUDPProxy, model.ProtoQUICSNI, model.ProtoWireGuard:
+			needUDP = true
+		case model.ProtoOpenVPN, model.ProtoDNS, model.ProtoMining, model.ProtoBitTorrent:
+			needTCP = true
+			needUDP = true
+		default:
+			needTCP = true
+			needUDP = true
 		}
 	}
-	return false
+	return needTCP, needUDP
+}
+
+func l4SkipExpr(needTCP, needUDP bool) string {
+	switch {
+	case needTCP && needUDP:
+		return "meta l4proto != { tcp, udp } accept"
+	case needTCP:
+		return "meta l4proto != tcp accept"
+	default:
+		return "meta l4proto != udp accept"
+	}
 }
 
 func renderPortRule(br string, r model.PortRule) ([]string, error) {

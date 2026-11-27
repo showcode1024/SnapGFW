@@ -45,15 +45,29 @@ func NewPolicyStore(path string) (*PolicyStore, error) {
 	return ps, nil
 }
 
-// mergeMissingProtocols ensures newly added protocol detectors appear in older saved policy files.
+// mergeMissingProtocols reconciles loaded/updated policies against the active catalog:
+// removes retired protocol IDs (e.g. legacy heuristic trojan) and appends newly added ones disabled.
 func mergeMissingProtocols(p *model.Policy) {
-	existing := p.ProtocolRuleMap()
-	for _, cat := range model.BaseProtocolCatalog() {
-		if _, ok := existing[cat.ID]; !ok {
-			cat.Enabled = false
-			p.Protocols = append(p.Protocols, cat)
+	catalog := model.BaseProtocolCatalog()
+	valid := make(map[model.ProtocolID]bool, len(catalog))
+	for _, cat := range catalog {
+		valid[cat.ID] = true
+	}
+	kept := make([]model.ProtocolRule, 0, len(catalog))
+	existing := make(map[model.ProtocolID]bool, len(p.Protocols))
+	for _, pr := range p.Protocols {
+		if valid[pr.ID] && !existing[pr.ID] {
+			kept = append(kept, pr)
+			existing[pr.ID] = true
 		}
 	}
+	for _, cat := range catalog {
+		if !existing[cat.ID] {
+			cat.Enabled = false
+			kept = append(kept, cat)
+		}
+	}
+	p.Protocols = kept
 }
 
 // OnChange registers a synchronous hook invoked whenever policy changes.

@@ -202,6 +202,43 @@ func TestQuarantineReapplyActive(t *testing.T) {
 	}
 }
 
+func TestQuarantineBurstDedupeAndPrune(t *testing.T) {
+	qm := NewQuarantineManager("snapgfw", nil, nil)
+	qm.applyBan = func(_, _ string, _ int) error { return nil }
+	qm.applyUnban = func(_, _ string) error { return nil }
+
+	pol := model.DefaultPolicy()
+	pol.Abuse.AutoQuarantineEnabled = true
+	pol.Abuse.QuarantineThreshold = 3
+	pol.Abuse.QuarantineWindowSec = 60
+	pol.Abuse.QuarantineDurationSec = 120
+
+	// 5 rapid hits of the SAME protocol within 3s must deduplicate to 1 hit (no false ban!)
+	for i := 0; i < 5; i++ {
+		qm.RecordBlock(pol, "10.91.0.77", "c77", "box77", "tls_sni sni=www.baidu.com")
+	}
+	if active := qm.ListActive(); len(active) != 0 {
+		t.Fatalf("same-protocol burst within 3s must not false-trigger quarantine, got %+v", active)
+	}
+
+	// Distinct protocols still count immediately and reach threshold=3
+	qm.RecordBlock(pol, "10.91.0.77", "c77", "box77", "fet_tcp popcount=4.0")
+	qm.RecordBlock(pol, "10.91.0.77", "c77", "box77", "socks socks5")
+	if active := qm.ListActive(); len(active) != 1 || active[0].TenantIP != "10.91.0.77" {
+		t.Fatalf("expected distinct protocol violations to trigger quarantine, got %+v", active)
+	}
+
+	// Verify stale hits for old IPs are pruned cleanly
+	qm.mu.Lock()
+	qm.hits["10.91.0.99"] = []time.Time{time.Now().Add(-5 * time.Minute)}
+	qm.pruneLocked(time.Now(), time.Now().Add(-time.Minute))
+	_, stillPresent := qm.hits["10.91.0.99"]
+	qm.mu.Unlock()
+	if stillPresent {
+		t.Fatalf("expected expired hits entry to be pruned")
+	}
+}
+
 func makeTestCipher(n int, seed byte) []byte {
 	out := make([]byte, n)
 	state := seed ^ 0x9b
@@ -345,11 +382,6 @@ func TestStrategyA_ActiveTLSProbeBlocksSelfSignedAndAllowsReality(t *testing.T) 
 	cfg := config.Default()
 	cfg.Workers = 1
 	pol := model.BuildPreset("anti_abuse")
-	for i := range pol.Protocols {
-		if pol.Protocols[i].ID == model.ProtoTrojan {
-			pol.Protocols[i].Enabled = false
-		}
-	}
 	audit, err := store.NewAuditStore("", 50, 0)
 	if err != nil {
 		t.Fatal(err)

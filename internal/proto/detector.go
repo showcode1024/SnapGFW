@@ -73,7 +73,6 @@ type CompiledPolicy struct {
 	Rules          map[model.ProtocolID]*CompiledRule
 	NeedTCP        bool
 	NeedUDP        bool
-	NeedTrojan     bool
 	GeoFallback    bool
 }
 
@@ -162,9 +161,6 @@ func CompilePolicy(p model.Policy, geositePath string) *CompiledPolicy {
 			case model.ProtoFETTCP, model.ProtoVLESSPlain, model.ProtoTLSUntrusted, model.ProtoAirportPanel, model.ProtoSOCKS, model.ProtoHTTPProxy, model.ProtoWebSocket,
 				model.ProtoTLSSNI, model.ProtoTLSAnomaly, model.ProtoSSH, model.ProtoHTTPPlain:
 				cp.NeedTCP = true
-			case model.ProtoTrojan:
-				cp.NeedTCP = true
-				cp.NeedTrojan = true
 			case model.ProtoFETUDP, model.ProtoUDPProxy, model.ProtoQUICSNI, model.ProtoWireGuard:
 				cp.NeedUDP = true
 			case model.ProtoOpenVPN, model.ProtoDNS, model.ProtoMining, model.ProtoBitTorrent:

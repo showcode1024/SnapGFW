@@ -45,8 +45,6 @@ type TCPSession struct {
 	wsRuleActive    bool
 	wsOffset        int
 	ovpn            OpenVPNTracker
-	trojan          TrojanTracker
-	trojanActive    bool
 }
 
 // NewTCPSession creates a bounded TCP protocol evaluation session.
@@ -54,12 +52,10 @@ func NewTCPSession(meta FlowMeta, cp *CompiledPolicy, maxPrefix int) *TCPSession
 	if maxPrefix <= 0 {
 		maxPrefix = 16384
 	}
-	_, trojanActive := cp.ActiveRule(modelProtoTrojan, meta)
 	return &TCPSession{
-		meta:         meta,
-		cp:           cp,
-		maxPrefix:    maxPrefix,
-		trojanActive: trojanActive,
+		meta:      meta,
+		cp:        cp,
+		maxPrefix: maxPrefix,
 	}
 }
 
@@ -68,8 +64,6 @@ func (s *TCPSession) SetTLSCertProber(p TLSCertProber) { s.prober = p }
 
 // SetCertRoots overrides the root CA pool used for passive TLS 1.2 certificate verification (tests).
 func (s *TCPSession) SetCertRoots(roots *x509.CertPool) { s.certRoots = roots }
-
-const modelProtoTrojan = "trojan"
 
 // Feed processes a contiguous TCP payload chunk in either direction (`rev == true` is server->client).
 func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
@@ -82,10 +76,10 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 	}
 	s.totalBytes += len(data)
 
-	// Post-TLS tracking: passive TLS 1.2 certificate verification and/or Trojan flight-length tracking.
-	if s.tlsDone && (s.certCheckActive || s.trojanActive) {
+	// Post-TLS tracking: passive TLS 1.2 certificate verification (offloads immediately on TLS 1.3).
+	if s.tlsDone && s.certCheckActive {
 		s.postTLSPkts++
-		if s.certCheckActive && rev {
+		if rev {
 			const maxCertServerBuf = 12288
 			if len(s.serverBuf) < maxCertServerBuf {
 				rem := maxCertServerBuf - len(s.serverBuf)
@@ -121,28 +115,7 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 			}
 		}
 
-		if s.trojanActive {
-			matched, tDone := s.trojan.Feed(rev, data)
-			if matched {
-				if cr, ok := s.cp.ActiveRule("trojan", s.meta); ok {
-					ev := MatchResult{Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action, Detail: "tls-in-tls seq"}
-					s.done = true
-					if cr.Rule.Action == "block" {
-						return EvalOutcome{Decision: DecisionBlock, Events: []MatchResult{ev}}
-					}
-					return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
-				}
-			}
-			if tDone || s.postTLSPkts >= 24 || s.totalBytes >= s.maxPrefix*2 {
-				s.trojanActive = false
-			}
-		}
-
-		if !s.certCheckActive && !s.trojanActive {
-			s.done = true
-			return EvalOutcome{Decision: DecisionAllow}
-		}
-		if s.postTLSPkts >= 24 || s.totalBytes >= s.maxPrefix*2 {
+		if !s.certCheckActive || s.postTLSPkts >= 12 || s.totalBytes >= s.maxPrefix*2 {
 			s.done = true
 			return EvalOutcome{Decision: DecisionAllow}
 		}
@@ -378,22 +351,7 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 					s.certCheckActive = true
 				}
 			}
-			if s.trojanActive {
-				// Seed TrojanTracker with the TLS handshake chunks seen so far
-				if matched, tDone := s.trojan.Feed(false, c); matched {
-					if cr, ok := s.cp.ActiveRule("trojan", s.meta); ok {
-						events = append(events, MatchResult{Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action, Detail: "tls-in-tls seq"})
-						s.done = true
-						if cr.Rule.Action == "block" {
-							return EvalOutcome{Decision: DecisionBlock, Events: events}
-						}
-						return EvalOutcome{Decision: DecisionAllow, Events: events}
-					}
-				} else if tDone {
-					s.trojanActive = false
-				}
-			}
-			if s.certCheckActive || s.trojanActive {
+			if s.certCheckActive {
 				return EvalOutcome{Decision: DecisionContinue, Events: events}
 			}
 			s.done = true

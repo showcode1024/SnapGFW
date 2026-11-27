@@ -33,9 +33,13 @@ func ReadL4Stats(tableName string, dropMark uint32) L4Stats {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "nft", "-j", "list", "table", "inet", tableName).Output()
+	// Use -t (--terse) to omit potentially huge GeoIP set elements while keeping all counters.
+	out, err := exec.CommandContext(ctx, "nft", "-j", "-t", "list", "table", "inet", tableName).Output()
 	if err != nil {
-		return L4Stats{}
+		out, err = exec.CommandContext(ctx, "nft", "-j", "list", "table", "inet", tableName).Output()
+		if err != nil {
+			return L4Stats{}
+		}
 	}
 	parsed := ParseNFTJSONStats(out, dropMark)
 

@@ -102,6 +102,38 @@ func TestRenderNFT_IsolationAndQueues(t *testing.T) {
 	if strings.Contains(emptyScript, "queue num") {
 		t.Fatalf("expected empty default policy to skip NFQUEUE rules:\n%s", emptyScript)
 	}
+
+	// TCP-only DPI policy must skip UDP from NFQUEUE (zero userspace copy for UDP)
+	tcpOnly := model.DefaultPolicy()
+	for i := range tcpOnly.Protocols {
+		if tcpOnly.Protocols[i].ID == model.ProtoTLSSNI {
+			tcpOnly.Protocols[i].Enabled = true
+			tcpOnly.Protocols[i].Action = model.ActionBlock
+		}
+	}
+	tcpScript, err := RenderNFT(cfg, tcpOnly)
+	if err != nil {
+		t.Fatalf("RenderNFT tcp-only failed: %v", err)
+	}
+	if !strings.Contains(tcpScript, "meta l4proto != tcp accept") {
+		t.Fatalf("expected TCP-only policy to bypass UDP before NFQUEUE:\n%s", tcpScript)
+	}
+
+	// UDP-only DPI policy must skip TCP from NFQUEUE
+	udpOnly := model.DefaultPolicy()
+	for i := range udpOnly.Protocols {
+		if udpOnly.Protocols[i].ID == model.ProtoUDPProxy {
+			udpOnly.Protocols[i].Enabled = true
+			udpOnly.Protocols[i].Action = model.ActionBlock
+		}
+	}
+	udpScript, err := RenderNFT(cfg, udpOnly)
+	if err != nil {
+		t.Fatalf("RenderNFT udp-only failed: %v", err)
+	}
+	if !strings.Contains(udpScript, "meta l4proto != udp accept") {
+		t.Fatalf("expected UDP-only policy to bypass TCP before NFQUEUE:\n%s", udpScript)
+	}
 }
 
 func TestParseNFTJSONStats(t *testing.T) {

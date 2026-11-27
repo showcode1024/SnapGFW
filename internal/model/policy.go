@@ -52,7 +52,6 @@ const (
 	ProtoTLSAnomaly   ProtocolID = "tls_anomaly"   // ECH, fake TLS/HTTP obfs, or SNI-less TLS
 	ProtoOpenVPN      ProtocolID = "openvpn"       // OpenVPN TCP/UDP with Session ID echo verification
 	ProtoWireGuard    ProtocolID = "wireguard"     // WireGuard UDP inside container traffic
-	ProtoTrojan       ProtocolID = "trojan"        // Trojan TLS-in-TLS length heuristic (~1% FP)
 	ProtoSSH          ProtocolID = "ssh"           // SSH-2.0 banner
 	ProtoHTTPPlain    ProtocolID = "http_plain"    // Plaintext HTTP host/method inspection
 	ProtoDNS          ProtocolID = "dns"           // DNS domain & oversized DNS tunnel inspection
@@ -76,7 +75,6 @@ var AllProtocolIDs = []ProtocolID{
 	ProtoTLSAnomaly,
 	ProtoOpenVPN,
 	ProtoWireGuard,
-	ProtoTrojan,
 	ProtoSSH,
 	ProtoHTTPPlain,
 	ProtoDNS,

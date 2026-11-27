@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +11,16 @@ import (
 	"snapgfw/internal/notify"
 	"snapgfw/internal/store"
 )
+
+const (
+	defaultQuarantineHitDedupe = 3 * time.Second
+	maxQuarantineTrackedIPs    = 2048
+)
+
+type quarantineDedupeKey struct {
+	tenantIP string
+	protocol string
+}
 
 // QuarantinedTenant represents an active temporary kernel ban on a tenant IP.
 type QuarantinedTenant struct {
@@ -29,9 +40,12 @@ type QuarantineManager struct {
 	applyBan   func(tableName, tenantIP string, durationSec int) error
 	applyUnban func(tableName, tenantIP string) error
 
-	mu     sync.Mutex
-	hits   map[string][]time.Time
-	banned map[string]QuarantinedTenant
+	mu          sync.Mutex
+	hits        map[string][]time.Time
+	lastHit     map[quarantineDedupeKey]time.Time
+	lastPrune   time.Time
+	hitDedupe   time.Duration
+	banned      map[string]QuarantinedTenant
 }
 
 // NewQuarantineManager creates a QuarantineManager bound to an nftables table.
@@ -43,6 +57,8 @@ func NewQuarantineManager(tableName string, audit *store.AuditStore, notifier *n
 		applyBan:   netfilter.QuarantineIP,
 		applyUnban: netfilter.UnquarantineIP,
 		hits:       make(map[string][]time.Time),
+		lastHit:    make(map[quarantineDedupeKey]time.Time),
+		hitDedupe:  defaultQuarantineHitDedupe,
 		banned:     make(map[string]QuarantinedTenant),
 	}
 }
@@ -75,7 +91,19 @@ func (q *QuarantineManager) RecordBlock(pol model.Policy, tenantIP, instanceID, 
 		q.mu.Unlock()
 		return
 	}
+	if q.hitDedupe > 0 {
+		protoKey, _, _ := strings.Cut(strings.TrimSpace(reason), " ")
+		dKey := quarantineDedupeKey{tenantIP: tenantIP, protocol: protoKey}
+		if prev, ok := q.lastHit[dKey]; ok && now.Sub(prev) < q.hitDedupe {
+			q.mu.Unlock()
+			return
+		}
+		q.lastHit[dKey] = now
+	}
 	cutoff := now.Add(-window)
+	if now.Sub(q.lastPrune) >= time.Minute || len(q.hits) > maxQuarantineTrackedIPs {
+		q.pruneLocked(now, cutoff)
+	}
 	arr := q.hits[tenantIP]
 	kept := arr[:0]
 	for _, ts := range arr {
@@ -88,6 +116,11 @@ func (q *QuarantineManager) RecordBlock(pol model.Policy, tenantIP, instanceID, 
 	shouldBan := len(kept) >= threshold
 	if shouldBan {
 		delete(q.hits, tenantIP)
+		for k := range q.lastHit {
+			if k.tenantIP == tenantIP {
+				delete(q.lastHit, k)
+			}
+		}
 	}
 	q.mu.Unlock()
 
@@ -152,8 +185,38 @@ func (q *QuarantineManager) Unban(tenantIP string) error {
 	q.mu.Lock()
 	delete(q.banned, tenantIP)
 	delete(q.hits, tenantIP)
+	for k := range q.lastHit {
+		if k.tenantIP == tenantIP {
+			delete(q.lastHit, k)
+		}
+	}
 	q.mu.Unlock()
 	return nil
+}
+
+func (q *QuarantineManager) pruneLocked(now, cutoff time.Time) {
+	q.lastPrune = now
+	for ip, arr := range q.hits {
+		kept := arr[:0]
+		for _, ts := range arr {
+			if ts.After(cutoff) {
+				kept = append(kept, ts)
+			}
+		}
+		if len(kept) == 0 {
+			delete(q.hits, ip)
+		} else {
+			q.hits[ip] = kept
+		}
+	}
+	if q.hitDedupe > 0 {
+		dedupeCutoff := now.Add(-q.hitDedupe * 2)
+		for k, ts := range q.lastHit {
+			if ts.Before(dedupeCutoff) {
+				delete(q.lastHit, k)
+			}
+		}
+	}
 }
 
 // ListActive returns currently non-expired quarantined tenants.

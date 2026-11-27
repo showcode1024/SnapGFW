@@ -62,7 +62,7 @@ func (s *NFQueueSource) Start(ctx context.Context, onPacket func(PacketEvent)) e
 			MaxPacketLen: 0xFFFF,
 			MaxQueueLen:  s.queueLen,
 			Copymode:     nfqueue.NfQnlCopyPacket,
-			Flags:        nfqueue.NfQaCfgFlagConntrack,
+			Flags:        nfqueue.NfQaCfgFlagConntrack | nfqueue.NfQaCfgFlagFailOpen,
 		})
 		if err != nil {
 			s.mu.Unlock()

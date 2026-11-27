@@ -464,33 +464,34 @@ func TestUDPProxy_BlocksHy2TUICAndObfsButAllowsDNSAndNTP(t *testing.T) {
 	}
 }
 
-func TestTrojanOffloadWithoutCCSAndSharedGeoSite(t *testing.T) {
+func TestTLSOffloadAndSharedGeoSite(t *testing.T) {
 	cp := testPolicy()
 
-	// P0-3: tls_sni and quic_sni with identical geosite config must share the same DomainPolicyMatcher pointer
-	if cp.Rules[model.ProtoTLSSNI].DomainMatcher == nil || cp.Rules[model.ProtoTLSSNI].DomainMatcher != cp.Rules[model.ProtoQUICSNI].DomainMatcher {
-		t.Fatalf("expected tls_sni and quic_sni to share a single DomainPolicyMatcher instance")
+	// P0-3: tls_sni, quic_sni and http_plain with identical geosite:cn config must share the same DomainPolicyMatcher pointer
+	if cp.Rules[model.ProtoTLSSNI].DomainMatcher == nil ||
+		cp.Rules[model.ProtoTLSSNI].DomainMatcher != cp.Rules[model.ProtoQUICSNI].DomainMatcher ||
+		cp.Rules[model.ProtoTLSSNI].DomainMatcher != cp.Rules[model.ProtoHTTPPlain].DomainMatcher {
+		t.Fatalf("expected tls_sni, quic_sni and http_plain to share a single DomainPolicyMatcher instance")
 	}
 
-	// P0-1: TLS 1.3 connection without ChangeCipherSpec must offload promptly instead of looping forever
+	// Inbound plain HTTP to domestic CN domain is blocked by default anti_abuse preset
+	sHTTPCN := NewTCPSession(testMeta("tcp", DirInbound, 80), cp, 16384)
+	rHTTPCN := sHTTPCN.Feed(false, []byte("GET / HTTP/1.1\r\nHost: www.bilibili.com\r\n\r\n"))
+	if rHTTPCN.Decision != DecisionBlock || len(rHTTPCN.Events) != 1 || rHTTPCN.Events[0].Protocol != model.ProtoHTTPPlain {
+		t.Fatalf("expected inbound plain HTTP CN host to be blocked by http_plain, got %+v", rHTTPCN)
+	}
+
+	// Post-TLS passive cert tracking must offload promptly when server replies with non-handshake data
 	sess := NewTCPSession(testMeta("tcp", DirInbound, 443), cp, 16384)
 	ch := wrapTLSRecord(buildClientHelloMsg("www.cloudflare.com", false))
 	r := sess.Feed(false, ch)
 	if r.Decision != DecisionContinue {
-		t.Fatalf("expected post-TLS Trojan tracking to continue initially, got %+v", r)
+		t.Fatalf("expected post-TLS passive cert check to continue initially, got %+v", r)
 	}
-	offloaded := false
 	chunk := make([]byte, 1400)
 	chunk[0] = 0x17
-	for i := 0; i < 30; i++ {
-		res := sess.Feed(i%2 == 1, chunk)
-		if res.Decision == DecisionAllow {
-			offloaded = true
-			break
-		}
-	}
-	if !offloaded {
-		t.Fatalf("expected TLS stream without ChangeCipherSpec to offload within 24 packets/32KB")
+	if res := sess.Feed(true, chunk); res.Decision != DecisionAllow {
+		t.Fatalf("expected TLS stream to offload immediately on non-handshake server record, got %+v", res)
 	}
 
 	// P1-5: Stratum mining with leading whitespace must still be caught
@@ -631,14 +632,7 @@ func TestVLESSPlainDetectionAndBenignSafety(t *testing.T) {
 }
 
 func TestPassiveTLS12CertCheckAndTLS13RealitySafety(t *testing.T) {
-	pol := model.BuildPreset("anti_abuse")
-	// Disable trojan so we isolate tls_untrusted behavior deterministically
-	for i := range pol.Protocols {
-		if pol.Protocols[i].ID == model.ProtoTrojan {
-			pol.Protocols[i].Enabled = false
-		}
-	}
-	cp := CompilePolicy(pol, "")
+	cp := testPolicy()
 
 	_, caCert, caKey := makeTestCert(t, "Test Root CA", nil, nil)
 	roots := x509.NewCertPool()
