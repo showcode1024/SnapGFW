@@ -32,7 +32,7 @@ import (
 	"snapgfw/internal/web"
 )
 
-var version = "v0.5.0"
+var version = "v0.6.0"
 
 func main() {
 	if len(os.Args) < 2 {
