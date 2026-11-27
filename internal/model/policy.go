@@ -41,6 +41,9 @@ const (
 	ProtoFETTCP       ProtocolID = "fet_tcp"       // Shadowsocks / SS-2022 TCP / native VMess-TCP
 	ProtoFETUDP       ProtocolID = "fet_udp"       // SS-UDP / SS-2022 UDP / VMess-UDP (with FP warning)
 	ProtoUDPProxy     ProtocolID = "udp_proxy"     // QUIC / Hysteria2 / TUIC & inbound UDP proxy blocker
+	ProtoVLESSPlain   ProtocolID = "vless_plain"   // Raw non-TLS VLESS TCP & plaintext VLESS-WS
+	ProtoTLSUntrusted ProtocolID = "tls_untrusted" // Self-signed / untrusted CA / SNI-mismatched TLS (non-REALITY Trojan/VLESS/AnyTLS)
+	ProtoAirportPanel ProtocolID = "airport_panel" // Commercial airport panels & backend APIs (V2Board / Xboard / SSPanel / PPanel)
 	ProtoSOCKS        ProtocolID = "socks"         // SOCKS4 / 4a / 5
 	ProtoHTTPProxy    ProtocolID = "http_proxy"    // HTTP CONNECT & absolute-URI forward proxy
 	ProtoWebSocket    ProtocolID = "websocket"     // Plaintext WebSocket / two-stage high-entropy WS
@@ -62,6 +65,9 @@ var AllProtocolIDs = []ProtocolID{
 	ProtoFETTCP,
 	ProtoFETUDP,
 	ProtoUDPProxy,
+	ProtoVLESSPlain,
+	ProtoTLSUntrusted,
+	ProtoAirportPanel,
 	ProtoSOCKS,
 	ProtoHTTPProxy,
 	ProtoWebSocket,

@@ -111,11 +111,18 @@ func TestWebAuthCSRFAndPolicyPresets(t *testing.T) {
 		t.Fatalf("expected single preset anti_abuse, got %s", rec.Body.String())
 	}
 
-	// 7. Verify GET / renders SnapGFW Web UI
+	// 7. Verify GET / renders SnapGFW Web UI with favicon link, and /favicon.svg serves SVG icon
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("SnapGFW")) || !bytes.Contains(rec.Body.Bytes(), []byte("导入推荐 · 防滥用")) {
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("SnapGFW")) || !bytes.Contains(rec.Body.Bytes(), []byte("导入推荐 · 防滥用")) || !bytes.Contains(rec.Body.Bytes(), []byte("/favicon.svg")) {
 		t.Fatalf("unexpected UI response: code=%d", rec.Code)
+	}
+	for _, iconPath := range []string{"/favicon.svg", "/favicon.ico"} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, iconPath, nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/svg+xml" || !bytes.Contains(rec.Body.Bytes(), []byte("<svg")) {
+			t.Fatalf("unexpected icon response for %s: code=%d ct=%q", iconPath, rec.Code, rec.Header().Get("Content-Type"))
+		}
 	}
 
 	// 8. Verify GET /api/overview returns version and GET /api/system/update returns structured payload

@@ -1,9 +1,17 @@
 package engine
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
+	"math/big"
 	"net"
 	"testing"
+	"time"
 
 	"snapgfw/internal/config"
 	"snapgfw/internal/model"
@@ -202,4 +210,220 @@ func makeTestCipher(n int, seed byte) []byte {
 		out[i] = state
 	}
 	return out
+}
+
+func startTestTLS13Server(t *testing.T, cert tls.Certificate, httpBody string) (uint16, func()) {
+	t.Helper()
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				tc := conn.(*tls.Conn)
+				if err := tc.Handshake(); err != nil {
+					return
+				}
+				if httpBody != "" {
+					buf := make([]byte, 1024)
+					_ = tc.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+					if n, _ := tc.Read(buf); n > 0 {
+						_, _ = tc.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n" + httpBody))
+					}
+				}
+			}(c)
+		}
+	}()
+	return uint16(ln.Addr().(*net.TCPAddr).Port), func() { _ = ln.Close() }
+}
+
+func makeEngineTestCert(t *testing.T, dnsName string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) (tls.Certificate, *x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isCA := caCert == nil
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(time.Now().UnixNano()),
+		Subject:               pkix.Name{CommonName: dnsName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  isCA,
+	}
+	if isCA {
+		tmpl.KeyUsage |= x509.KeyUsageCertSign
+	} else {
+		tmpl.DNSNames = []string{dnsName}
+	}
+	parent := tmpl
+	signer := key
+	if caCert != nil {
+		parent = caCert
+		signer = caKey
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, parsed, key
+}
+
+func buildTestTLSClientHello(sni string) []byte {
+	var sniExt []byte
+	sniBytes := []byte(sni)
+	listLen := 1 + 2 + len(sniBytes)
+	sniExt = binary.BigEndian.AppendUint16(sniExt, 0x0000)
+	sniExt = binary.BigEndian.AppendUint16(sniExt, uint16(2+listLen))
+	sniExt = binary.BigEndian.AppendUint16(sniExt, uint16(listLen))
+	sniExt = append(sniExt, 0x00)
+	sniExt = binary.BigEndian.AppendUint16(sniExt, uint16(len(sniBytes)))
+	sniExt = append(sniExt, sniBytes...)
+
+	var body []byte
+	body = append(body, 0x03, 0x03)
+	body = append(body, make([]byte, 32)...)
+	body = append(body, 0x00)
+	body = binary.BigEndian.AppendUint16(body, 2)
+	body = binary.BigEndian.AppendUint16(body, 0x1301)
+	body = append(body, 0x01, 0x00)
+	body = binary.BigEndian.AppendUint16(body, uint16(len(sniExt)))
+	body = append(body, sniExt...)
+
+	hs := append([]byte{0x01, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}, body...)
+	rec := []byte{0x16, 0x03, 0x01}
+	rec = binary.BigEndian.AppendUint16(rec, uint16(len(hs)))
+	return append(rec, hs...)
+}
+
+func TestStrategyA_ActiveTLSProbeBlocksSelfSignedAndAllowsReality(t *testing.T) {
+	_, caCert, caKey := makeEngineTestCert(t, "Test Root CA", nil, nil)
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	// Server 1: Self-signed TLS 1.3 (simulating Trojan / VLESS+TLS / AnyTLS without REALITY)
+	selfCert, _, _ := makeEngineTestCert(t, "www.microsoft.com", nil, nil)
+	selfPort, stopSelf := startTestTLS13Server(t, selfCert, "")
+	defer stopSelf()
+
+	// Server 2: CA-signed TLS 1.3 matching SNI (simulating VLESS+REALITY / AnyTLS+REALITY proxying probe to real dest)
+	realityCert, _, _ := makeEngineTestCert(t, "www.microsoft.com", caCert, caKey)
+	realityPort, stopReality := startTestTLS13Server(t, realityCert, "<html><title>Microsoft</title></html>")
+	defer stopReality()
+
+	// Server 3: CA-signed TLS 1.3 with mismatched domain
+	mismatchCert, _, _ := makeEngineTestCert(t, "other.example.net", caCert, caKey)
+	mismatchPort, stopMismatch := startTestTLS13Server(t, mismatchCert, "")
+	defer stopMismatch()
+
+	// Server 4: CA-signed HTTPS V2Board commercial airport panel -> blocked by airport_panel!
+	v2bCert, _, _ := makeEngineTestCert(t, "shop.airport.example", caCert, caKey)
+	v2bPort, stopV2B := startTestTLS13Server(t, v2bCert, "<html><script>window.settings={is_email_verify:1,is_invite_force:0}</script><script src=\"/theme/xboard/assets/app.js\"></script></html>")
+	defer stopV2B()
+
+	// Server 5: CA-signed HTTPS 3x-ui personal node panel -> MUST stay allowed!
+	xuiCert, _, _ := makeEngineTestCert(t, "node.personal.example", caCert, caKey)
+	xuiPort, stopXUI := startTestTLS13Server(t, xuiCert, "<html><title>3x-ui Panel</title><body>s-ui / 3x-ui</body></html>")
+	defer stopXUI()
+
+	cfg := config.Default()
+	cfg.Workers = 1
+	pol := model.BuildPreset("anti_abuse")
+	for i := range pol.Protocols {
+		if pol.Protocols[i].ID == model.ProtoTrojan {
+			pol.Protocols[i].Enabled = false
+		}
+	}
+	audit, err := store.NewAuditStore("", 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := New(cfg, pol, audit, nil, nil)
+	eng.Prober().SetRoots(roots)
+
+	tenantIP := net.ParseIP("127.0.0.1")
+	peerIP := net.ParseIP("198.51.100.88")
+	ch := buildTestTLSClientHello("www.microsoft.com")
+
+	// 1. Probe self-signed port -> cached Untrusted -> engine blocks inbound TLS stream!
+	if res := eng.Prober().ProbeSync(tenantIP, selfPort, "www.microsoft.com", true); res.CertStatus != proto.TLSProbeUntrusted {
+		t.Fatalf("expected self-signed server to probe as Untrusted, got %+v", res)
+	}
+	syn1 := buildIPv4TCP(peerIP, tenantIP, 51001, selfPort, 100, TCPFlagSYN, nil)
+	_ = eng.ProcessSync(PacketEvent{StreamID: 901, Direction: proto.DirInbound, Reverse: false, Data: syn1})
+	pay1 := buildIPv4TCP(peerIP, tenantIP, 51001, selfPort, 101, TCPFlagACK|TCPFlagPSH, ch)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 901, Direction: proto.DirInbound, Reverse: false, Data: pay1}); v != VerdictDropStream {
+		t.Fatalf("expected self-signed TLS proxy to be blocked, got %v", v)
+	}
+
+	// 2. Probe REALITY / valid HTTPS port -> cached Trusted & Clean -> engine allows immediately!
+	if res := eng.Prober().ProbeSync(tenantIP, realityPort, "www.microsoft.com", true); res.CertStatus != proto.TLSProbeTrusted || res.AirportStatus != proto.TLSProbeTrusted {
+		t.Fatalf("expected REALITY/valid CA server to probe as Trusted+Clean, got %+v", res)
+	}
+	syn2 := buildIPv4TCP(peerIP, tenantIP, 51002, realityPort, 200, TCPFlagSYN, nil)
+	_ = eng.ProcessSync(PacketEvent{StreamID: 902, Direction: proto.DirInbound, Reverse: false, Data: syn2})
+	pay2 := buildIPv4TCP(peerIP, tenantIP, 51002, realityPort, 201, TCPFlagACK|TCPFlagPSH, ch)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 902, Direction: proto.DirInbound, Reverse: false, Data: pay2}); v != VerdictAcceptStream {
+		t.Fatalf("expected REALITY / valid HTTPS to be allowed cleanly, got %v", v)
+	}
+
+	// 3. Probe SNI-mismatched port -> cached Untrusted -> engine blocks!
+	if res := eng.Prober().ProbeSync(tenantIP, mismatchPort, "www.microsoft.com", true); res.CertStatus != proto.TLSProbeUntrusted {
+		t.Fatalf("expected mismatched cert to probe as Untrusted, got %+v", res)
+	}
+	syn3 := buildIPv4TCP(peerIP, tenantIP, 51003, mismatchPort, 300, TCPFlagSYN, nil)
+	_ = eng.ProcessSync(PacketEvent{StreamID: 903, Direction: proto.DirInbound, Reverse: false, Data: syn3})
+	pay3 := buildIPv4TCP(peerIP, tenantIP, 51003, mismatchPort, 301, TCPFlagACK|TCPFlagPSH, ch)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 903, Direction: proto.DirInbound, Reverse: false, Data: pay3}); v != VerdictDropStream {
+		t.Fatalf("expected SNI-mismatched TLS proxy to be blocked, got %v", v)
+	}
+
+	// 4. Probe CA-signed HTTPS Xboard/V2Board airport panel -> Cert Trusted, Airport Untrusted -> blocked as airport_panel!
+	if res := eng.Prober().ProbeSync(tenantIP, v2bPort, "shop.airport.example", true); res.CertStatus != proto.TLSProbeTrusted || res.AirportStatus != proto.TLSProbeUntrusted {
+		t.Fatalf("expected HTTPS Xboard panel to probe as CertTrusted+AirportUntrusted, got %+v", res)
+	}
+	chV2B := buildTestTLSClientHello("shop.airport.example")
+	syn5 := buildIPv4TCP(peerIP, tenantIP, 51005, v2bPort, 500, TCPFlagSYN, nil)
+	_ = eng.ProcessSync(PacketEvent{StreamID: 905, Direction: proto.DirInbound, Reverse: false, Data: syn5})
+	pay5 := buildIPv4TCP(peerIP, tenantIP, 51005, v2bPort, 501, TCPFlagACK|TCPFlagPSH, chV2B)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 905, Direction: proto.DirInbound, Reverse: false, Data: pay5}); v != VerdictDropStream {
+		t.Fatalf("expected CA-signed HTTPS Xboard airport panel to be blocked, got %v", v)
+	}
+
+	// 5. Probe CA-signed HTTPS 3x-ui personal panel -> Cert Trusted + Airport Clean -> ALLOWED!
+	if res := eng.Prober().ProbeSync(tenantIP, xuiPort, "node.personal.example", true); res.CertStatus != proto.TLSProbeTrusted || res.AirportStatus != proto.TLSProbeTrusted {
+		t.Fatalf("expected HTTPS 3x-ui panel to probe as CertTrusted+AirportClean, got %+v", res)
+	}
+	chXUI := buildTestTLSClientHello("node.personal.example")
+	syn6 := buildIPv4TCP(peerIP, tenantIP, 51006, xuiPort, 600, TCPFlagSYN, nil)
+	_ = eng.ProcessSync(PacketEvent{StreamID: 906, Direction: proto.DirInbound, Reverse: false, Data: syn6})
+	pay6 := buildIPv4TCP(peerIP, tenantIP, 51006, xuiPort, 601, TCPFlagACK|TCPFlagPSH, chXUI)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 906, Direction: proto.DirInbound, Reverse: false, Data: pay6}); v != VerdictAcceptStream {
+		t.Fatalf("expected HTTPS 3x-ui personal panel to remain allowed, got %v", v)
+	}
+
+	// 6. Verify IsOwnProbe bypasses DPI completely so host probes never self-block
+	eng.Prober().inFlightMu.Lock()
+	eng.Prober().inFlight[probeEndpoint{localIP: peerIP.String(), localPort: 51999, dstIP: tenantIP.String(), dstPort: selfPort}] = struct{}{}
+	eng.Prober().inFlightMu.Unlock()
+	synOwn := buildIPv4TCP(peerIP, tenantIP, 51999, selfPort, 400, TCPFlagSYN, nil)
+	if v := eng.ProcessSync(PacketEvent{StreamID: 904, Direction: proto.DirInbound, Reverse: false, Data: synOwn}); v != VerdictAcceptStream {
+		t.Fatalf("expected own probe stream to bypass DPI immediately, got %v", v)
+	}
 }

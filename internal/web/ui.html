@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>SnapGFW</title>
 <style>
 :root{
@@ -42,6 +44,9 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg-page);padding:24px}
 .login-card{width:340px;background:var(--bg-canvas);border:1px solid var(--border);border-radius:10px;padding:28px;box-shadow:0 6px 24px rgba(0,0,0,.04);display:flex;flex-direction:column;gap:16px}
 .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:17px;letter-spacing:-.02em}
+.brand-icon{width:22px;height:22px;flex:none;display:block;border-radius:6px}
+.insp-desc{margin:0;font-size:12px;line-height:1.5;color:var(--text-2)}
+.insp-warn{margin:0;padding:8px 10px;border-radius:6px;background:var(--warn-bg);color:#92400e;font-size:11.5px;line-height:1.45;border:1px solid #fde68a}
 .dot{width:7px;height:7px;border-radius:999px;background:var(--ok);flex:none}
 .dot.warn{background:var(--warn)}
 .dot.danger{background:var(--danger)}
@@ -178,7 +183,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
 
 <div id="login-view" class="login-wrap hidden">
   <form id="login-form" class="login-card" autocomplete="on">
-    <div class="brand"><span class="dot"></span><span>SnapGFW</span></div>
+    <div class="brand"><img src="/favicon.svg" alt="" class="brand-icon" width="24" height="24" style="width:24px;height:24px"><span>SnapGFW</span></div>
     <div class="field">
       <label for="login-user">用户名</label>
       <input id="login-user" name="username" value="admin" required>
@@ -195,7 +200,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
 <div id="app-view" class="shell hidden">
   <aside class="sidebar">
     <div class="sb-head">
-      <span class="brand" style="font-size:16px">SnapGFW</span>
+      <span class="brand" style="font-size:16px"><img src="/favicon.svg" alt="" class="brand-icon" width="20" height="20" style="width:20px;height:20px"><span>SnapGFW</span></span>
       <span class="sb-iface"><span id="sb-status-dot" class="dot"></span><span id="sb-iface-name">rmbr0</span></span>
     </div>
     <nav class="nav" aria-label="主导航">
@@ -239,7 +244,7 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
         <div class="pane-main">
           <div class="toolbar">
             <input id="proto-search" class="search-in" placeholder="筛选协议名称或 ID..." aria-label="筛选协议">
-            <span id="proto-enabled-count" style="font-size:12px;color:var(--text-2)">已启用 0 / 17</span>
+            <span id="proto-enabled-count" style="font-size:12px;color:var(--text-2)">已启用 0 / 20</span>
           </div>
           <div class="col-hdr">
             <span style="width:36px">启用</span>
@@ -492,10 +497,13 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
   'use strict';
 
   const PROTO_META = {
-    fet_tcp:     { label: 'Shadowsocks 2022 / FET', fields: [] },
-    fet_udp:     { label: '全加密 UDP 代理', fields: ['min_udp'] },
-    udp_proxy:   { label: 'Hy2 / TUIC / UDP 代理', fields: ['udp_proxy'] },
-    socks:       { label: 'SOCKS4 / SOCKS5', fields: [] },
+    fet_tcp:       { label: 'Shadowsocks 2022 / FET', fields: [] },
+    fet_udp:       { label: '全加密 UDP 代理', fields: ['min_udp'] },
+    udp_proxy:     { label: 'Hy2 / TUIC / UDP 代理', fields: ['udp_proxy'] },
+    vless_plain:   { label: '裸 VLESS / 明文 WS', fields: [] },
+    tls_untrusted: { label: '自签/无效证书 TLS (非 REALITY)', fields: [] },
+    airport_panel: { label: '机场面板与对接 (V2Board/SSPanel)', fields: [] },
+    socks:         { label: 'SOCKS4 / SOCKS5', fields: [] },
     http_proxy:  { label: 'HTTP 代理', fields: [] },
     websocket:   { label: 'WebSocket 隧道', fields: ['ws_mode'] },
     tls_sni:     { label: 'TLS SNI 域名', fields: ['domains'] },
@@ -825,6 +833,8 @@ textarea{resize:vertical;font:400 12px/1.5 var(--mono);min-height:76px}
         <div class="insp-title"><h2>${esc(meta.label)}</h2><span class="row-id">${esc(p.id)}</span></div>
         <button type="button" id="pi-enabled" class="switch" role="switch" aria-checked="${p.enabled}" aria-label="启用 ${esc(meta.label)}"></button>
       </div>
+      ${p.description ? `<p class="insp-desc">${esc(p.description)}</p>` : ''}
+      ${p.warning ? `<p class="insp-warn">${esc(p.warning)}</p>` : ''}
       <div class="field"><label>处置动作</label>
         <div id="pi-act" class="seg" style="width:100%">
           ${['block','log','allow'].map(a => `<button type="button" data-v="${a}" class="${p.action===a?'active':''}" style="flex:1">${ACT_LABEL[a]}</button>`).join('')}

@@ -1,8 +1,10 @@
 package proto
 
 import (
+	"crypto/x509"
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	"snapgfw/internal/model"
 )
@@ -24,21 +26,27 @@ type EvalOutcome struct {
 
 // TCPSession holds bounded per-stream protocol state for one pending TCP connection.
 type TCPSession struct {
-	meta          FlowMeta
-	cp            *CompiledPolicy
-	maxPrefix     int
-	clientBuf     []byte
-	serverBuf     []byte
-	totalBytes    int
-	postTLSPkts   int
-	done          bool
-	tlsDone       bool
-	httpDone      bool
-	wsInspecting  bool
-	wsOffset      int
-	ovpn          OpenVPNTracker
-	trojan        TrojanTracker
-	trojanActive  bool
+	meta            FlowMeta
+	cp              *CompiledPolicy
+	prober          TLSCertProber
+	certRoots       *x509.CertPool
+	maxPrefix       int
+	clientBuf       []byte
+	serverBuf       []byte
+	totalBytes      int
+	postTLSPkts     int
+	done            bool
+	tlsDone         bool
+	certCheckActive bool
+	clientSNI       string
+	httpDone        bool
+	airportRespWait bool
+	wsInspecting    bool
+	wsRuleActive    bool
+	wsOffset        int
+	ovpn            OpenVPNTracker
+	trojan          TrojanTracker
+	trojanActive    bool
 }
 
 // NewTCPSession creates a bounded TCP protocol evaluation session.
@@ -55,6 +63,12 @@ func NewTCPSession(meta FlowMeta, cp *CompiledPolicy, maxPrefix int) *TCPSession
 	}
 }
 
+// SetTLSCertProber attaches a non-blocking Strategy-A certificate prober for inbound TLS inspection.
+func (s *TCPSession) SetTLSCertProber(p TLSCertProber) { s.prober = p }
+
+// SetCertRoots overrides the root CA pool used for passive TLS 1.2 certificate verification (tests).
+func (s *TCPSession) SetCertRoots(roots *x509.CertPool) { s.certRoots = roots }
+
 const modelProtoTrojan = "trojan"
 
 // Feed processes a contiguous TCP payload chunk in either direction (`rev == true` is server->client).
@@ -68,23 +82,89 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 	}
 	s.totalBytes += len(data)
 
-	// If we are in post-TLS Trojan flight-length tracking mode, feed chunk directly
-	// without growing clientBuf/serverBuf, and guarantee bounded offload even when
-	// TLS 1.3 omits ChangeCipherSpec.
-	if s.tlsDone && s.trojanActive {
+	// Post-TLS tracking: passive TLS 1.2 certificate verification and/or Trojan flight-length tracking.
+	if s.tlsDone && (s.certCheckActive || s.trojanActive) {
 		s.postTLSPkts++
-		matched, tDone := s.trojan.Feed(rev, data)
-		if matched {
-			if cr, ok := s.cp.ActiveRule("trojan", s.meta); ok {
-				ev := MatchResult{Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action, Detail: "tls-in-tls seq"}
-				s.done = true
-				if cr.Rule.Action == "block" {
-					return EvalOutcome{Decision: DecisionBlock, Events: []MatchResult{ev}}
+		if s.certCheckActive && rev {
+			const maxCertServerBuf = 12288
+			if len(s.serverBuf) < maxCertServerBuf {
+				rem := maxCertServerBuf - len(s.serverBuf)
+				s.serverBuf = append(s.serverBuf, data[:min(len(data), rem)]...)
+			}
+			certs, isTLS13, st := ParseTLSServerCerts(s.serverBuf)
+			switch st {
+			case TLSValid:
+				s.certCheckActive = false
+				if !isTLS13 && len(certs) > 0 {
+					if trusted, reason := VerifyCertChain(certs, s.clientSNI, s.certRoots, time.Now()); !trusted {
+						if cr, ok := s.cp.ActiveRule(model.ProtoTLSUntrusted, s.meta); ok {
+							ev := MatchResult{
+								Matched:  true,
+								Protocol: cr.Rule.ID,
+								Action:   cr.Rule.Action,
+								Detail:   "tls1.2 " + reason,
+							}
+							s.done = true
+							if cr.Rule.Action == model.ActionBlock {
+								return EvalOutcome{Decision: DecisionBlock, Events: []MatchResult{ev}}
+							}
+							return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
+						}
+					}
 				}
-				return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
+			case TLSNotTLS, TLSMalformed:
+				s.certCheckActive = false
+			case TLSNeedMore:
+				if len(s.serverBuf) >= maxCertServerBuf || s.postTLSPkts >= 12 {
+					s.certCheckActive = false
+				}
 			}
 		}
-		if tDone || s.postTLSPkts >= 24 || s.totalBytes >= s.maxPrefix*2 {
+
+		if s.trojanActive {
+			matched, tDone := s.trojan.Feed(rev, data)
+			if matched {
+				if cr, ok := s.cp.ActiveRule("trojan", s.meta); ok {
+					ev := MatchResult{Matched: true, Protocol: cr.Rule.ID, Action: cr.Rule.Action, Detail: "tls-in-tls seq"}
+					s.done = true
+					if cr.Rule.Action == "block" {
+						return EvalOutcome{Decision: DecisionBlock, Events: []MatchResult{ev}}
+					}
+					return EvalOutcome{Decision: DecisionAllow, Events: []MatchResult{ev}}
+				}
+			}
+			if tDone || s.postTLSPkts >= 24 || s.totalBytes >= s.maxPrefix*2 {
+				s.trojanActive = false
+			}
+		}
+
+		if !s.certCheckActive && !s.trojanActive {
+			s.done = true
+			return EvalOutcome{Decision: DecisionAllow}
+		}
+		if s.postTLSPkts >= 24 || s.totalBytes >= s.maxPrefix*2 {
+			s.done = true
+			return EvalOutcome{Decision: DecisionAllow}
+		}
+		return EvalOutcome{Decision: DecisionContinue}
+	}
+
+	// Passive plaintext HTTP response inspection for hosted commercial airport homepages (GET /).
+	if s.airportRespWait {
+		if !rev {
+			return EvalOutcome{Decision: DecisionContinue}
+		}
+		if len(s.serverBuf) < 8192 {
+			rem := 8192 - len(s.serverBuf)
+			s.serverBuf = append(s.serverBuf, data[:min(len(data), rem)]...)
+		}
+		if matched, detail := DetectAirportHTTPResponse(s.serverBuf); matched {
+			s.airportRespWait = false
+			return s.emitSingle(model.ProtoAirportPanel, "http "+detail, true)
+		}
+		// Inspect up to first full header + initial HTML chunk (<= 4KB or 3 server packets), then offload.
+		if bytesIndexCRLFCRLF(s.serverBuf) >= 0 && len(s.serverBuf) >= 2048 || len(s.serverBuf) >= 8192 {
+			s.airportRespWait = false
 			s.done = true
 			return EvalOutcome{Decision: DecisionAllow}
 		}
@@ -92,8 +172,8 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 	}
 
 	if rev {
-		if len(s.serverBuf) < 8192 {
-			rem := 8192 - len(s.serverBuf)
+		if len(s.serverBuf) < 12288 {
+			rem := 12288 - len(s.serverBuf)
 			s.serverBuf = append(s.serverBuf, data[:min(len(data), rem)]...)
 		}
 	} else {
@@ -103,7 +183,8 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 		}
 	}
 
-	// If in two-stage WebSocket payload inspection mode, unmask client WS frames and inspect entropy.
+	// If in two-stage WebSocket payload inspection mode, unmask client WS frames and inspect
+	// both plaintext VLESS headers and high-entropy encrypted payloads (VMess-WS / obfs).
 	if s.wsInspecting {
 		if rev {
 			return EvalOutcome{Decision: DecisionContinue}
@@ -111,7 +192,11 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 		wsTail := s.clientBuf[min(s.wsOffset, len(s.clientBuf)):]
 		unmasked, needMore, invalid := ExtractWSClientPayload(wsTail, 32)
 		if invalid {
-			return s.emitSingle("websocket", "invalid/unmasked ws frame", true)
+			if s.wsRuleActive {
+				return s.emitSingle("websocket", "invalid/unmasked ws frame", true)
+			}
+			s.done = true
+			return EvalOutcome{Decision: DecisionAllow}
 		}
 		if needMore {
 			if len(s.clientBuf) >= s.maxPrefix {
@@ -120,7 +205,12 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 			}
 			return EvalOutcome{Decision: DecisionContinue}
 		}
-		if AnalyzeFET(unmasked).LooksEncrypted {
+		if _, vlessActive := s.cp.ActiveRule(model.ProtoVLESSPlain, s.meta); vlessActive {
+			if vSt, vDetail := DetectVLESSHeader(unmasked); vSt == VLESSMatched {
+				return s.emitSingle(model.ProtoVLESSPlain, "ws "+vDetail, true)
+			}
+		}
+		if s.wsRuleActive && AnalyzeFET(unmasked).LooksEncrypted {
 			return s.emitSingle("websocket", fmt.Sprintf("ws encrypted payload (%dB)", len(unmasked)), true)
 		}
 		s.done = true
@@ -243,6 +333,51 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 				s.done = true
 				return EvalOutcome{Decision: DecisionBlock, Events: events}
 			}
+			// Strategy A certificate check + optional HTTPS airport panel homepage probe (never triggers on REALITY or 3x-ui/s-ui).
+			certRule, certActive := s.cp.ActiveRule(model.ProtoTLSUntrusted, s.meta)
+			airportRule, airportActive := s.cp.ActiveRule(model.ProtoAirportPanel, s.meta)
+			airportInbound := airportActive && s.meta.Direction == DirInbound
+			if certActive || airportInbound {
+				s.clientSNI = ch.SNI
+				probeHandledCert := !certActive
+				if s.prober != nil && s.meta.Direction == DirInbound {
+					res := s.prober.LookupAndTrigger(s.meta.TenantIP, s.meta.DstPort, ch.SNI, airportInbound)
+					if airportInbound && res.AirportStatus == TLSProbeUntrusted {
+						events = append(events, MatchResult{
+							Matched:  true,
+							Protocol: airportRule.Rule.ID,
+							Action:   airportRule.Rule.Action,
+							Detail:   res.AirportReason,
+						})
+						if airportRule.Rule.Action == model.ActionBlock {
+							s.done = true
+							return EvalOutcome{Decision: DecisionBlock, Events: events}
+						}
+					}
+					if certActive {
+						switch res.CertStatus {
+						case TLSProbeUntrusted:
+							events = append(events, MatchResult{
+								Matched:  true,
+								Protocol: certRule.Rule.ID,
+								Action:   certRule.Rule.Action,
+								Detail:   res.CertReason,
+							})
+							if certRule.Rule.Action == model.ActionBlock {
+								s.done = true
+								return EvalOutcome{Decision: DecisionBlock, Events: events}
+							}
+							probeHandledCert = true
+						case TLSProbeTrusted:
+							probeHandledCert = true
+						}
+					}
+				}
+				if !probeHandledCert {
+					// On cache miss (or passive-only mode), also inspect server's TLS 1.2 plaintext cert if sent.
+					s.certCheckActive = true
+				}
+			}
 			if s.trojanActive {
 				// Seed TrojanTracker with the TLS handshake chunks seen so far
 				if matched, tDone := s.trojan.Feed(false, c); matched {
@@ -254,9 +389,12 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 						}
 						return EvalOutcome{Decision: DecisionAllow, Events: events}
 					}
-				} else if !tDone {
-					return EvalOutcome{Decision: DecisionContinue, Events: events}
+				} else if tDone {
+					s.trojanActive = false
 				}
+			}
+			if s.certCheckActive || s.trojanActive {
+				return EvalOutcome{Decision: DecisionContinue, Events: events}
 			}
 			s.done = true
 			return EvalOutcome{Decision: DecisionAllow, Events: events}
@@ -292,6 +430,7 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 				}
 			}
 			if httpInfo.IsWebSocket {
+				_, vlessWSActive := s.cp.ActiveRule(model.ProtoVLESSPlain, s.meta)
 				if cr, ok := s.cp.ActiveRule("websocket", s.meta); ok {
 					switch cr.Rule.WSMode {
 					case "block_all":
@@ -306,6 +445,7 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 						return EvalOutcome{Decision: DecisionAllow, Events: events}
 					case "two_stage_high":
 						s.wsInspecting = true
+						s.wsRuleActive = true
 						s.wsOffset = httpInfo.HeaderEndOffset
 						// If client already pipelined WS payload right after HTTP headers, inspect immediately.
 						if len(c) > s.wsOffset {
@@ -314,6 +454,11 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 								return s.emitSingle("websocket", "invalid ws frame", true)
 							}
 							if !needMore {
+								if vlessWSActive {
+									if vSt, vDetail := DetectVLESSHeader(unmasked); vSt == VLESSMatched {
+										return s.emitSingle(model.ProtoVLESSPlain, "ws "+vDetail, true)
+									}
+								}
 								if AnalyzeFET(unmasked).LooksEncrypted {
 									return s.emitSingle("websocket", "ws encrypted payload", true)
 								}
@@ -327,9 +472,55 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 							Matched: true, Protocol: cr.Rule.ID, Action: "log",
 							Detail: "ws upgrade host=" + httpInfo.Host,
 						})
+						if vlessWSActive {
+							s.wsInspecting = true
+							s.wsRuleActive = false
+							s.wsOffset = httpInfo.HeaderEndOffset
+							if len(c) > s.wsOffset {
+								unmasked, needMore, invalid := ExtractWSClientPayload(c[s.wsOffset:], 32)
+								if !invalid && !needMore {
+									if vSt, vDetail := DetectVLESSHeader(unmasked); vSt == VLESSMatched {
+										return s.emitSingle(model.ProtoVLESSPlain, "ws "+vDetail, true)
+									}
+									s.done = true
+									return EvalOutcome{Decision: DecisionAllow, Events: events}
+								}
+							}
+							return EvalOutcome{Decision: DecisionContinue, Events: events}
+						}
 						s.done = true
 						return EvalOutcome{Decision: DecisionAllow, Events: events}
 					}
+				} else if vlessWSActive {
+					s.wsInspecting = true
+					s.wsRuleActive = false
+					s.wsOffset = httpInfo.HeaderEndOffset
+					if len(c) > s.wsOffset {
+						unmasked, needMore, invalid := ExtractWSClientPayload(c[s.wsOffset:], 32)
+						if !invalid && !needMore {
+							if vSt, vDetail := DetectVLESSHeader(unmasked); vSt == VLESSMatched {
+								return s.emitSingle(model.ProtoVLESSPlain, "ws "+vDetail, true)
+							}
+							s.done = true
+							return EvalOutcome{Decision: DecisionAllow}
+						}
+					}
+					return EvalOutcome{Decision: DecisionContinue}
+				}
+			}
+			if cr, ok := s.cp.ActiveRule(model.ProtoAirportPanel, s.meta); ok {
+				if matched, detail := DetectAirportHTTPRequest(httpInfo); matched {
+					events = append(events, MatchResult{
+						Matched:  true,
+						Protocol: cr.Rule.ID,
+						Action:   cr.Rule.Action,
+						Detail:   detail,
+					})
+					s.done = true
+					if cr.Rule.Action == model.ActionBlock {
+						return EvalOutcome{Decision: DecisionBlock, Events: events}
+					}
+					return EvalOutcome{Decision: DecisionAllow, Events: events}
 				}
 			}
 			if cr, ok := s.cp.ActiveRule("http_plain", s.meta); ok && httpInfo.Host != "" {
@@ -344,6 +535,10 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 					}
 					return EvalOutcome{Decision: DecisionAllow, Events: events}
 				}
+			}
+			if _, ok := s.cp.ActiveRule(model.ProtoAirportPanel, s.meta); ok && s.meta.Direction == DirInbound && IsAirportHomepageCandidate(httpInfo) {
+				s.airportRespWait = true
+				return EvalOutcome{Decision: DecisionContinue, Events: events}
 			}
 			s.done = true
 			return EvalOutcome{Decision: DecisionAllow, Events: events}
@@ -381,6 +576,18 @@ func (s *TCPSession) Feed(rev bool, data []byte) EvalOutcome {
 		}
 	}
 
+	// 7.5 Raw non-TLS VLESS TCP header (0x00 + 16B UUID + addons + cmd + port + addr)
+	if _, vlessActive := s.cp.ActiveRule(model.ProtoVLESSPlain, s.meta); vlessActive && c[0] == 0x00 {
+		switch vSt, vDetail := DetectVLESSHeader(c); vSt {
+		case VLESSNeedMore:
+			if len(c) < 320 {
+				return EvalOutcome{Decision: DecisionContinue}
+			}
+		case VLESSMatched:
+			return s.emitSingle(model.ProtoVLESSPlain, vDetail, true)
+		}
+	}
+
 	// 8. FET (Fully Encrypted Traffic: Shadowsocks / SS-2022 / VMess-TCP)
 	if cr, ok := s.cp.ActiveRule("fet_tcp", s.meta); ok {
 		if len(c) < 6 {
@@ -411,6 +618,15 @@ func firstNonSpaceByte(b []byte) byte {
 		}
 	}
 	return 0
+}
+
+func bytesIndexCRLFCRLF(b []byte) int {
+	for i := 0; i+3 < len(b); i++ {
+		if b[i] == '\r' && b[i+1] == '\n' && b[i+2] == '\r' && b[i+3] == '\n' {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s *TCPSession) emitSingle(id model.ProtocolID, detail string, allowIfNotBlock bool) EvalOutcome {

@@ -36,6 +36,28 @@ type MatchResult struct {
 	Detail   string
 }
 
+// TLSCertProbeStatus represents cached active probe verdicts for an inbound TLS endpoint.
+type TLSCertProbeStatus int
+
+const (
+	TLSProbeUnknown   TLSCertProbeStatus = iota // Not yet probed or inconclusive (fail-open)
+	TLSProbeTrusted                             // Verified valid CA cert matching SNI (e.g. REALITY or legit HTTPS)
+	TLSProbeUntrusted                           // Presented self-signed, untrusted CA, expired, or mismatched cert
+)
+
+// TLSProbeResult combines Strategy-A certificate verdict and optional HTTPS airport panel verdict.
+type TLSProbeResult struct {
+	CertStatus    TLSCertProbeStatus
+	CertReason    string
+	AirportStatus TLSCertProbeStatus // Unknown | Trusted (clean) | Untrusted (airport panel detected)
+	AirportReason string
+}
+
+// TLSCertProber provides non-blocking cached Strategy-A certificate and HTTPS airport panel lookups.
+type TLSCertProber interface {
+	LookupAndTrigger(tenantIP net.IP, dstPort uint16, sni string, checkAirport bool) TLSProbeResult
+}
+
 // CompiledRule holds pre-compiled matchers for one ProtocolRule.
 type CompiledRule struct {
 	Rule          model.ProtocolRule
@@ -137,7 +159,7 @@ func CompilePolicy(p model.Policy, geositePath string) *CompiledPolicy {
 		cp.Rules[pr.ID] = cr
 		if pr.Enabled && !p.GlobalBypass {
 			switch pr.ID {
-			case model.ProtoFETTCP, model.ProtoSOCKS, model.ProtoHTTPProxy, model.ProtoWebSocket,
+			case model.ProtoFETTCP, model.ProtoVLESSPlain, model.ProtoTLSUntrusted, model.ProtoAirportPanel, model.ProtoSOCKS, model.ProtoHTTPProxy, model.ProtoWebSocket,
 				model.ProtoTLSSNI, model.ProtoTLSAnomaly, model.ProtoSSH, model.ProtoHTTPPlain:
 				cp.NeedTCP = true
 			case model.ProtoTrojan:

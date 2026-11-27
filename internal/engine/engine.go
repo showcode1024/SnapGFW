@@ -33,6 +33,7 @@ type Engine struct {
 	audit      *store.AuditStore
 	discovery  *runman.Discovery
 	quarantine *QuarantineManager
+	prober     *TLSCertProber
 
 	policyPtr atomic.Pointer[policySnapshot]
 	workers   []*worker
@@ -59,6 +60,7 @@ func New(cfg config.Config, initialPolicy model.Policy, audit *store.AuditStore,
 		audit:      audit,
 		discovery:  discovery,
 		quarantine: quarantine,
+		prober:     NewTLSCertProber(),
 	}
 	e.UpdatePolicy(initialPolicy)
 
@@ -77,6 +79,9 @@ func (e *Engine) UpdatePolicy(pol model.Policy) {
 		compiled: compiled,
 	})
 }
+
+// Prober returns the engine's Strategy-A TLS certificate prober.
+func (e *Engine) Prober() *TLSCertProber { return e.prober }
 
 // GeoFallback returns true if built-in CN domains are active because geosite.dat was absent.
 func (e *Engine) GeoFallback() bool {
@@ -268,6 +273,10 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 
 	if ent == nil {
 		meta := buildFlowMeta(ev, pkt, w.engine.discovery)
+		if w.engine.prober != nil && w.engine.prober.IsOwnProbe(meta) {
+			w.engine.offloadedAccept.Add(1)
+			return VerdictAcceptStream
+		}
 		if snap.compiled.IsTrustedTenant(meta.TenantIP) {
 			w.engine.offloadedAccept.Add(1)
 			return VerdictAcceptStream
@@ -307,8 +316,9 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 		}
 		if pkt.L4Proto == 6 {
 			ent.tcpC2S = newTCPHalfReassembler(w.engine.cfg.TCPPrefixLimit)
-			ent.tcpS2C = newTCPHalfReassembler(8192)
+			ent.tcpS2C = newTCPHalfReassembler(12288)
 			ent.tcpSess = proto.NewTCPSession(meta, snap.compiled, w.engine.cfg.TCPPrefixLimit)
+			ent.tcpSess.SetTLSCertProber(w.engine.prober)
 		} else {
 			ent.udpSess = proto.NewUDPSession(meta, snap.compiled, w.engine.cfg.UDPMaxPackets)
 		}
@@ -318,6 +328,10 @@ func (w *worker) handleEvent(ev PacketEvent) Verdict {
 	} else {
 		ent.lastSeen = time.Now()
 		w.lru.MoveToFront(ent.lruElem)
+		if w.engine.prober != nil && w.engine.prober.IsOwnProbe(ent.meta) {
+			w.finishEntry(ent, VerdictAcceptStream)
+			return VerdictAcceptStream
+		}
 	}
 
 	if ent.finished {

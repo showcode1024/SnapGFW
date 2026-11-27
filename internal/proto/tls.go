@@ -1,8 +1,16 @@
 package proto
 
 import (
+	"bytes"
+	"crypto/x509"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"os"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 )
 
 // TLSParseStatus indicates ClientHello parsing progress.
@@ -195,4 +203,267 @@ func ParseClientHelloBody(body []byte) (TLSClientHello, bool) {
 		}
 	}
 	return out, true
+}
+
+// ParseTLSServerCerts passively parses server-to-client TLS Handshake records to detect
+// whether TLS 1.3 was negotiated (in which case certificates are encrypted and isTLS13=true)
+// or extracts the plaintext X.509 certificate chain from a TLS 1.2 (or older) handshake.
+func ParseTLSServerCerts(b []byte) (certs []*x509.Certificate, isTLS13 bool, status TLSParseStatus) {
+	if len(b) == 0 {
+		return nil, false, TLSNeedMore
+	}
+	if b[0] != 0x16 {
+		return nil, false, TLSNotTLS
+	}
+	if len(b) < 5 {
+		return nil, false, TLSNeedMore
+	}
+	if b[1] != 0x03 || b[2] > 0x09 {
+		return nil, false, TLSNotTLS
+	}
+
+	var hs []byte
+	pos := 0
+	records := 0
+	for pos < len(b) {
+		if pos+5 > len(b) {
+			break
+		}
+		recType := b[pos]
+		if recType != 0x16 {
+			// Reached ChangeCipherSpec (0x14), ApplicationData (0x17), or Alert (0x15).
+			break
+		}
+		if b[pos+1] != 0x03 || b[pos+2] > 0x09 {
+			return nil, false, TLSMalformed
+		}
+		recLen := int(binary.BigEndian.Uint16(b[pos+3 : pos+5]))
+		if recLen == 0 || recLen > 16384 {
+			return nil, false, TLSMalformed
+		}
+		if pos+5+recLen > len(b) {
+			// Partial handshake record; parse what we have so far (e.g. ServerHello might already be complete).
+			hs = append(hs, b[pos+5:]...)
+			break
+		}
+		hs = append(hs, b[pos+5:pos+5+recLen]...)
+		pos += 5 + recLen
+		records++
+		if records > 32 {
+			return nil, false, TLSMalformed
+		}
+	}
+
+	// Walk TLS handshake messages inside reassembled stream.
+	off := 0
+	sawServerHello := false
+	for off+4 <= len(hs) {
+		msgType := hs[off]
+		msgLen := int(hs[off+1])<<16 | int(hs[off+2])<<8 | int(hs[off+3])
+		if msgLen > 32768 {
+			return nil, false, TLSMalformed
+		}
+		if off+4+msgLen > len(hs) {
+			return nil, false, TLSNeedMore
+		}
+		body := hs[off+4 : off+4+msgLen]
+		off += 4 + msgLen
+
+		switch msgType {
+		case 0x02: // ServerHello
+			sawServerHello = true
+			if isServerHelloTLS13(body) {
+				return nil, true, TLSValid
+			}
+		case 0x0b: // Certificate (TLS 1.2 plaintext)
+			parsed, ok := parseTLSCertificateList(body)
+			if !ok {
+				return nil, false, TLSMalformed
+			}
+			return parsed, false, TLSValid
+		case 0x0e: // ServerHelloDone (no cert presented, e.g. PSK/resumed session)
+			return nil, false, TLSValid
+		}
+	}
+
+	if !sawServerHello && len(hs) >= 4 && hs[0] != 0x02 {
+		return nil, false, TLSMalformed
+	}
+	return nil, false, TLSNeedMore
+}
+
+func isServerHelloTLS13(body []byte) bool {
+	// 2B version + 32B random + 1B session_id_len
+	if len(body) < 35 {
+		return false
+	}
+	off := 34
+	sidLen := int(body[off])
+	off++
+	if off+sidLen+3 > len(body) {
+		return false
+	}
+	off += sidLen
+	off += 2 // cipher suite
+	off += 1 // compression method
+	if off+2 > len(body) {
+		return false
+	}
+	extTotalLen := int(binary.BigEndian.Uint16(body[off : off+2]))
+	off += 2
+	if off+extTotalLen > len(body) {
+		return false
+	}
+	extEnd := off + extTotalLen
+	for off+4 <= extEnd {
+		extType := binary.BigEndian.Uint16(body[off : off+2])
+		extLen := int(binary.BigEndian.Uint16(body[off+2 : off+4]))
+		off += 4
+		if off+extLen > extEnd {
+			return false
+		}
+		if extType == 0x002b && extLen == 2 { // supported_versions
+			ver := binary.BigEndian.Uint16(body[off : off+2])
+			return ver >= 0x0304
+		}
+		off += extLen
+	}
+	return false
+}
+
+func parseTLSCertificateList(body []byte) ([]*x509.Certificate, bool) {
+	if len(body) < 3 {
+		return nil, false
+	}
+	listLen := int(body[0])<<16 | int(body[1])<<8 | int(body[2])
+	if 3+listLen > len(body) {
+		return nil, false
+	}
+	off := 3
+	end := 3 + listLen
+	var certs []*x509.Certificate
+	for off < end {
+		if off+3 > end {
+			return nil, false
+		}
+		certLen := int(body[off])<<16 | int(body[off+1])<<8 | int(body[off+2])
+		off += 3
+		if certLen == 0 || off+certLen > end {
+			return nil, false
+		}
+		cert, err := x509.ParseCertificate(body[off : off+certLen])
+		if err != nil {
+			return nil, false
+		}
+		certs = append(certs, cert)
+		off += certLen
+		if len(certs) >= 10 {
+			break
+		}
+	}
+	return certs, len(certs) > 0
+}
+
+var (
+	sysRootsOnce  sync.Once
+	sysRootsReady bool
+)
+
+// SystemRootsAvailable returns true when platform root CAs are present so certificate
+// verification will not falsely reject legitimate CA-signed sites (e.g. REALITY targets).
+func SystemRootsAvailable() bool {
+	sysRootsOnce.Do(func() {
+		if runtime.GOOS != "linux" {
+			sysRootsReady = true
+			return
+		}
+		if p := os.Getenv("SSL_CERT_FILE"); p != "" {
+			if st, err := os.Stat(p); err == nil && st.Size() > 0 {
+				sysRootsReady = true
+				return
+			}
+		}
+		for _, p := range []string{
+			"/etc/ssl/certs/ca-certificates.crt",
+			"/etc/pki/tls/certs/ca-bundle.crt",
+			"/etc/ssl/ca-bundle.pem",
+			"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+			"/etc/ssl/cert.pem",
+		} {
+			if st, err := os.Stat(p); err == nil && st.Size() > 0 {
+				sysRootsReady = true
+				return
+			}
+		}
+	})
+	return sysRootsReady
+}
+
+// VerifyCertChain checks a presented server certificate chain against trusted roots (or platform
+// system roots when roots == nil) and the observed SNI. Returns (true, "") when trusted or when
+// verification cannot safely run (fail-open).
+func VerifyCertChain(certs []*x509.Certificate, sni string, roots *x509.CertPool, now time.Time) (bool, string) {
+	if len(certs) == 0 {
+		return true, ""
+	}
+	if roots == nil && !SystemRootsAvailable() {
+		return true, ""
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	leaf := certs[0]
+	var inter *x509.CertPool
+	if len(certs) > 1 {
+		inter = x509.NewCertPool()
+		for _, c := range certs[1:] {
+			inter.AddCert(c)
+		}
+	}
+	opts := x509.VerifyOptions{
+		DNSName:       sni,
+		Intermediates: inter,
+		Roots:         roots,
+		CurrentTime:   now,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if _, err := leaf.Verify(opts); err == nil {
+		return true, ""
+	} else {
+		return false, describeCertError(err, leaf, sni)
+	}
+}
+
+func describeCertError(err error, leaf *x509.Certificate, sni string) string {
+	cn := leaf.Subject.CommonName
+	if cn == "" && len(leaf.DNSNames) > 0 {
+		cn = leaf.DNSNames[0]
+	}
+	sniTag := sni
+	if sniTag == "" {
+		sniTag = "-"
+	}
+	var hostErr x509.HostnameError
+	if errors.As(err, &hostErr) {
+		return fmt.Sprintf("cert mismatch sni=%s cn=%s", sniTag, cn)
+	}
+	var authErr x509.UnknownAuthorityError
+	if errors.As(err, &authErr) {
+		if bytes.Equal(leaf.RawIssuer, leaf.RawSubject) {
+			return fmt.Sprintf("self-signed cert sni=%s cn=%s", sniTag, cn)
+		}
+		issuer := leaf.Issuer.CommonName
+		if issuer == "" && len(leaf.Issuer.Organization) > 0 {
+			issuer = leaf.Issuer.Organization[0]
+		}
+		return fmt.Sprintf("untrusted ca sni=%s issuer=%s", sniTag, issuer)
+	}
+	var invErr x509.CertificateInvalidError
+	if errors.As(err, &invErr) {
+		if invErr.Reason == x509.Expired {
+			return fmt.Sprintf("expired cert sni=%s cn=%s", sniTag, cn)
+		}
+		return fmt.Sprintf("invalid cert sni=%s cn=%s", sniTag, cn)
+	}
+	return fmt.Sprintf("untrusted cert sni=%s cn=%s", sniTag, cn)
 }

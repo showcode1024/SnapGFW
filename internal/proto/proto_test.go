@@ -3,10 +3,17 @@ package proto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
+	"math/big"
 	"net"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/hkdf"
 
@@ -499,5 +506,215 @@ func TestTrojanOffloadWithoutCCSAndSharedGeoSite(t *testing.T) {
 	frames, err := parseQUICCryptoFrames(payloadWithAck)
 	if err != nil || len(frames) != 1 || string(frames[0].Data) != "abc" {
 		t.Fatalf("expected parseQUICCryptoFrames to skip ACK frame, got frames=%+v err=%v", frames, err)
+	}
+}
+
+func makeTestCert(t *testing.T, dnsName string, caCert *x509.Certificate, caKey *ecdsa.PrivateKey) ([]byte, *x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isCA := caCert == nil
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(time.Now().UnixNano()),
+		Subject:               pkix.Name{CommonName: dnsName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  isCA,
+	}
+	if isCA {
+		tmpl.KeyUsage |= x509.KeyUsageCertSign
+	} else {
+		tmpl.DNSNames = []string{dnsName}
+	}
+	parent := tmpl
+	signer := key
+	if caCert != nil {
+		parent = caCert
+		signer = caKey
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der, parsed, key
+}
+
+func buildTLSServerHello(tls13 bool) []byte {
+	var body []byte
+	body = append(body, 0x03, 0x03)          // legacy version
+	body = append(body, make([]byte, 32)...) // random
+	body = append(body, 0x00)                // session_id len
+	body = append(body, 0x13, 0x01)          // cipher suite
+	body = append(body, 0x00)                // compression
+	if tls13 {
+		// supported_versions extension (0x002b) = 0x0304 (TLS 1.3)
+		exts := []byte{0x00, 0x2b, 0x00, 0x02, 0x03, 0x04}
+		body = binary.BigEndian.AppendUint16(body, uint16(len(exts)))
+		body = append(body, exts...)
+	} else {
+		body = binary.BigEndian.AppendUint16(body, 0)
+	}
+	hs := append([]byte{0x02, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}, body...)
+	return wrapTLSRecord(hs)
+}
+
+func buildTLS12CertMsg(derCerts ...[]byte) []byte {
+	var list []byte
+	for _, der := range derCerts {
+		list = append(list, byte(len(der)>>16), byte(len(der)>>8), byte(len(der)))
+		list = append(list, der...)
+	}
+	body := append([]byte{byte(len(list) >> 16), byte(len(list) >> 8), byte(len(list))}, list...)
+	hs := append([]byte{0x0b, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}, body...)
+	return wrapTLSRecord(hs)
+}
+
+func TestVLESSPlainDetectionAndBenignSafety(t *testing.T) {
+	cp := testPolicy()
+	uuid := []byte{0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6, 0x47, 0x88, 0x99, 0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76}
+
+	// 1. Raw VLESS TCP targeting a domain (with plaintext HTTP inner payload -> would NOT look like high-entropy FET!)
+	var vlessDomain []byte
+	vlessDomain = append(vlessDomain, 0x00)
+	vlessDomain = append(vlessDomain, uuid...)
+	vlessDomain = append(vlessDomain, 0x00)       // addon_len = 0
+	vlessDomain = append(vlessDomain, 0x01)       // cmd = TCP
+	vlessDomain = append(vlessDomain, 0x00, 0x50) // port = 80
+	vlessDomain = append(vlessDomain, 0x02)       // addrType = domain
+	dom := "www.example.com"
+	vlessDomain = append(vlessDomain, byte(len(dom)))
+	vlessDomain = append(vlessDomain, dom...)
+	vlessDomain = append(vlessDomain, "GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"...)
+
+	s1 := NewTCPSession(testMeta("tcp", DirInbound, 10086), cp, 16384)
+	r1 := s1.Feed(false, vlessDomain)
+	if r1.Decision != DecisionBlock || len(r1.Events) != 1 || r1.Events[0].Protocol != model.ProtoVLESSPlain {
+		t.Fatalf("expected raw VLESS TCP domain request to be blocked as vless_plain, got %+v", r1)
+	}
+
+	// 2. Plaintext VLESS-WS (WebSocket carrying VLESS header + plaintext HTTP -> caught by vless_plain!)
+	wsReq := "GET /vless HTTP/1.1\r\nHost: edge.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+	mask := [4]byte{0x44, 0x55, 0x66, 0x77}
+	wsFrame := []byte{0x82, 0x80 | byte(len(vlessDomain))}
+	wsFrame = append(wsFrame, mask[:]...)
+	for i, b := range vlessDomain {
+		wsFrame = append(wsFrame, b^mask[i&3])
+	}
+	s2 := NewTCPSession(testMeta("tcp", DirInbound, 80), cp, 16384)
+	if r := s2.Feed(false, []byte(wsReq)); r.Decision != DecisionContinue {
+		t.Fatalf("expected continue on WS upgrade, got %+v", r)
+	}
+	r2 := s2.Feed(false, wsFrame)
+	if r2.Decision != DecisionBlock || len(r2.Events) != 1 || r2.Events[0].Protocol != model.ProtoVLESSPlain {
+		t.Fatalf("expected plaintext VLESS-WS to be blocked as vless_plain, got %+v", r2)
+	}
+
+	// 3. Benign binary starting with 0x00 (e.g. PostgreSQL startup message) must NOT match VLESS
+	pgStartup := []byte{
+		0x00, 0x00, 0x00, 0x26, // len = 38
+		0x00, 0x03, 0x00, 0x00, // protocol 3.0
+		'u', 's', 'e', 'r', 0x00, 'p', 'o', 's', 't', 'g', 'r', 'e', 's', 0x00,
+		'd', 'a', 't', 'a', 'b', 'a', 's', 'e', 0x00, 'a', 'p', 'p', 0x00, 0x00,
+	}
+	if st, _ := DetectVLESSHeader(pgStartup); st != VLESSNotVLESS {
+		t.Fatalf("PostgreSQL startup packet must not match VLESS, got status=%v", st)
+	}
+}
+
+func TestPassiveTLS12CertCheckAndTLS13RealitySafety(t *testing.T) {
+	pol := model.BuildPreset("anti_abuse")
+	// Disable trojan so we isolate tls_untrusted behavior deterministically
+	for i := range pol.Protocols {
+		if pol.Protocols[i].ID == model.ProtoTrojan {
+			pol.Protocols[i].Enabled = false
+		}
+	}
+	cp := CompilePolicy(pol, "")
+
+	_, caCert, caKey := makeTestCert(t, "Test Root CA", nil, nil)
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	validDER, _, _ := makeTestCert(t, "www.cloudflare.com", caCert, caKey)
+	selfDER, _, _ := makeTestCert(t, "www.cloudflare.com", nil, nil)
+
+	ch := wrapTLSRecord(buildClientHelloMsg("www.cloudflare.com", false))
+
+	// 1. TLS 1.2 with self-signed cert -> blocked immediately on Connection #1
+	sSelf := NewTCPSession(testMeta("tcp", DirInbound, 443), cp, 16384)
+	sSelf.SetCertRoots(roots)
+	if r := sSelf.Feed(false, ch); r.Decision != DecisionContinue {
+		t.Fatalf("expected continue waiting for server cert, got %+v", r)
+	}
+	srvSelf := append(buildTLSServerHello(false), buildTLS12CertMsg(selfDER)...)
+	if r := sSelf.Feed(true, srvSelf); r.Decision != DecisionBlock || len(r.Events) != 1 || r.Events[0].Protocol != model.ProtoTLSUntrusted {
+		t.Fatalf("expected TLS 1.2 self-signed cert to be blocked as tls_untrusted, got %+v", r)
+	}
+
+	// 2. TLS 1.2 with valid CA cert matching SNI -> allowed cleanly
+	sValid := NewTCPSession(testMeta("tcp", DirInbound, 443), cp, 16384)
+	sValid.SetCertRoots(roots)
+	_ = sValid.Feed(false, ch)
+	srvValid := append(buildTLSServerHello(false), buildTLS12CertMsg(validDER)...)
+	if r := sValid.Feed(true, srvValid); r.Decision != DecisionAllow || len(r.Events) != 0 {
+		t.Fatalf("expected valid CA-signed TLS 1.2 cert to be allowed, got %+v", r)
+	}
+
+	// 3. TLS 1.3 (e.g. VLESS+REALITY / AnyTLS+REALITY / TLS 1.3 HTTPS) -> passive check sees TLS 1.3 and offloads cleanly
+	s13 := NewTCPSession(testMeta("tcp", DirInbound, 443), cp, 16384)
+	s13.SetCertRoots(roots)
+	_ = s13.Feed(false, ch)
+	if r := s13.Feed(true, buildTLSServerHello(true)); r.Decision != DecisionAllow || len(r.Events) != 0 {
+		t.Fatalf("expected TLS 1.3 handshake (REALITY/HTTPS) to offload cleanly without false block, got %+v", r)
+	}
+}
+
+func TestAirportPanelDetectionAllows3XUIAndSUI(t *testing.T) {
+	cp := testPolicy()
+
+	// 1. Outbound V2bX / XrayR UniProxy backend sync -> blocked as airport_panel
+	sOut := NewTCPSession(testMeta("tcp", DirOutbound, 80), cp, 16384)
+	rOut := sOut.Feed(false, []byte("GET /api/v1/server/UniProxy/config?node_id=1&node_type=vless HTTP/1.1\r\nHost: panel.airport.example\r\n\r\n"))
+	if rOut.Decision != DecisionBlock || len(rOut.Events) != 1 || rOut.Events[0].Protocol != model.ProtoAirportPanel {
+		t.Fatalf("expected V2Board UniProxy backend sync to be blocked as airport_panel, got %+v", rOut)
+	}
+
+	// 2. Outbound SSPanel mod_mu backend sync -> blocked as airport_panel
+	sSS := NewTCPSession(testMeta("tcp", DirOutbound, 80), cp, 16384)
+	rSS := sSS.Feed(false, []byte("GET /mod_mu/users?node_id=5&key=abc HTTP/1.1\r\nHost: ss.airport.example\r\n\r\n"))
+	if rSS.Decision != DecisionBlock || len(rSS.Events) != 1 || rSS.Events[0].Protocol != model.ProtoAirportPanel {
+		t.Fatalf("expected SSPanel mod_mu sync to be blocked as airport_panel, got %+v", rSS)
+	}
+
+	// 3. Inbound hosted V2Board/Xboard homepage over plain HTTP -> caught on first server response
+	sHome := NewTCPSession(testMeta("tcp", DirInbound, 80), cp, 16384)
+	if r := sHome.Feed(false, []byte("GET / HTTP/1.1\r\nHost: myairport.example\r\n\r\n")); r.Decision != DecisionContinue {
+		t.Fatalf("expected GET / to inspect homepage response, got %+v", r)
+	}
+	v2bResp := "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><script>window.settings={title:'Cloud',is_email_verify:1,is_invite_force:0}</script><script src=\"/theme/v2board/assets/umi.js\"></script></html>"
+	if r := sHome.Feed(true, []byte(v2bResp)); r.Decision != DecisionBlock || len(r.Events) != 1 || r.Events[0].Protocol != model.ProtoAirportPanel {
+		t.Fatalf("expected hosted V2Board homepage to be blocked as airport_panel, got %+v", r)
+	}
+
+	// 4. Personal node panels (3x-ui / x-ui / s-ui) MUST NOT be blocked!
+	s3xui := NewTCPSession(testMeta("tcp", DirInbound, 2053), cp, 16384)
+	r3xui := s3xui.Feed(false, []byte("POST /panel/inbound/list HTTP/1.1\r\nHost: node.example.com:2053\r\n\r\n"))
+	if r3xui.Decision != DecisionAllow || len(r3xui.Events) != 0 {
+		t.Fatalf("3x-ui API must NOT be blocked by airport_panel, got %+v", r3xui)
+	}
+	s3xuiHome := NewTCPSession(testMeta("tcp", DirInbound, 2053), cp, 16384)
+	_ = s3xuiHome.Feed(false, []byte("GET / HTTP/1.1\r\nHost: node.example.com:2053\r\n\r\n"))
+	xuiHTML := "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nSet-Cookie: 3x-ui=abc; Path=/\r\n\r\n<html><title>3x-ui Login</title><body>" + string(make([]byte, 2200)) + "</body></html>"
+	if r := s3xuiHome.Feed(true, []byte(xuiHTML)); r.Decision != DecisionAllow || len(r.Events) != 0 {
+		t.Fatalf("3x-ui login homepage must NOT be blocked by airport_panel, got %+v", r)
 	}
 }

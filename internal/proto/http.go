@@ -154,6 +154,7 @@ func hasInvalidHTTPHeaderBytes(b []byte) bool {
 // unmasking each frame's payload using its 4-byte masking key so plaintext JSON/text WS stays readable
 // while encrypted VMess-WS remains high-entropy random bytes.
 func ExtractWSClientPayload(buf []byte, minBytes int) (unmasked []byte, needMore bool, invalid bool) {
+	maxBytes := max(minBytes, 256)
 	pos := 0
 	for pos < len(buf) && len(unmasked) < minBytes {
 		if pos+2 > len(buf) {
@@ -196,7 +197,7 @@ func ExtractWSClientPayload(buf []byte, minBytes int) (unmasked []byte, needMore
 			take = int(plen)
 		}
 		if take > 0 && (opcode == 1 || opcode == 2 || opcode == 0) {
-			for i := 0; i < take && len(unmasked) < minBytes; i++ {
+			for i := 0; i < take && len(unmasked) < maxBytes; i++ {
 				unmasked = append(unmasked, buf[dataStart+i]^maskKey[i&3])
 			}
 		}

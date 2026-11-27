@@ -32,6 +32,9 @@ import (
 //go:embed ui.html
 var uiHTML []byte
 
+//go:embed favicon.svg
+var faviconSVG []byte
+
 const (
 	sessionCookieName = "snapgfw_session"
 	sessionTTL        = 12 * time.Hour
@@ -114,6 +117,8 @@ func (s *Server) currentVersion() string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleUI)
+	mux.HandleFunc("GET /favicon.svg", s.handleFavicon)
+	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.requireAuth(false, s.handleLogout))
 
@@ -197,6 +202,12 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(uiHTML)
+}
+
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(faviconSVG)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
